@@ -1,619 +1,738 @@
 // ==========================================
-// GLOBALS & CONSTANTS
+// 1. SHEET & CONSTANTS
 // ==========================================
-const SHEET_QUESTIONS  = "Questions Tracker";
-const SHEET_ANSWERED   = "Answered";
-const SHEET_TEAM       = "Team Setup";
 
-// Titles that count as "Support" (supervisor-tier) even if Category isn't set to "Support"
-const SUPERVISOR_TITLES = ["Manager", "Assistant Manager", "Supervisor", "Escalation Supervisor"];
+const TASK_SHEET = "Task Master";
+const TEAM_SHEET = "Team";
+const LOG_SHEET = "Log";
+const PERSONAL_STATUS_SHEET = "Personal Task Status";
 
-function doGet() {
-  ensureSheetsExist();
-  return HtmlService.createTemplateFromFile('Index')
-    .evaluate()
-    .setTitle('Support Escalation Hub')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+// ==========================================
+// DAY-NAME NORMALIZATION
+// ==========================================
+// "Working Days" (Team sheet) and "Recurring Days" (Task Master sheet) are both
+// free-text comma lists. If they're not typed in the exact "Mon,Tue,Wed..."
+// format the frontend compares against, a day-of-week check can silently fail —
+// e.g. a Team row using "Tuesday" instead of "Tue" would never match today's
+// CST day abbreviation, quietly blocking that person's entire My Tasks list
+// while every other view (which doesn't do this exact-match check) still works.
+// This normalizes common variants down to the canonical 3-letter abbreviation
+// so entry-format inconsistencies between rows can't cause that.
+const DAY_ALIASES_ = {
+  'sun': 'Sun', 'sunday': 'Sun',
+  'mon': 'Mon', 'monday': 'Mon',
+  'tue': 'Tue', 'tues': 'Tue', 'tuesday': 'Tue',
+  'wed': 'Wed', 'weds': 'Wed', 'wednesday': 'Wed',
+  'thu': 'Thu', 'thur': 'Thu', 'thurs': 'Thu', 'thursday': 'Thu',
+  'fri': 'Fri', 'friday': 'Fri',
+  'sat': 'Sat', 'saturday': 'Sat'
+};
+
+// Coerces a "records completed" value to a non-negative integer. The frontend
+// requires a positive count on every completion, but this guards the backend so
+// a malformed/legacy call can't poison the Log/Personal Status sheets.
+function parseCount_(val) {
+  const n = parseInt(val, 10);
+  return isNaN(n) || n < 0 ? 0 : n;
 }
 
-function ensureSheetsExist() {
+// Returns the Log sheet, creating it (or back-filling the Records Count header)
+// on first use so both new and legacy spreadsheets get the extra column.
+function getLogSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let logSheet = ss.getSheetByName(LOG_SHEET);
+  if (!logSheet) {
+    logSheet = ss.insertSheet(LOG_SHEET);
+    logSheet.appendRow(["Timestamp", "User", "Sheet Name", "Task", "Status", "Records Count"]);
+  } else if (logSheet.getLastRow() === 0) {
+    logSheet.appendRow(["Timestamp", "User", "Sheet Name", "Task", "Status", "Records Count"]);
+  } else if (logSheet.getRange(1, 6).getValue() !== "Records Count") {
+    logSheet.getRange(1, 6).setValue("Records Count");
+  }
+  return logSheet;
+}
 
-  if (!ss.getSheetByName(SHEET_QUESTIONS)) {
-    const s = ss.insertSheet(SHEET_QUESTIONS);
-    s.appendRow(["Question", "Event/Wedding Name", "Asked By", "Created", "Due Date & Time", "Auto Priority", "Hours Left", "Case / Event Link", "Answer", "Status", "Assigned To"]);
+function normalizeDayAbbrev_(raw) {
+  const key = (raw || '').toString().trim().toLowerCase();
+  if (!key) return '';
+  return DAY_ALIASES_[key] || raw.toString().trim();
+}
+
+// Parses a free-text days cell into a normalized ["Mon","Tue",...] array.
+// Also expands a few common shorthand phrases people tend to type by hand.
+function parseDaysList_(raw, defaultDays) {
+  const str = (raw || '').toString().trim();
+  if (!str) return defaultDays ? defaultDays.slice() : [];
+
+  const lower = str.toLowerCase();
+  if (lower === 'm-f' || lower === 'mon-fri' || lower === 'weekdays' || lower === 'all weekdays' || lower === 'weekday') {
+    return ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  }
+  if (lower === 'daily' || lower === 'everyday' || lower === 'every day' || lower === '7 days' || lower === 'all days' || lower === 'every day of the week') {
+    return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   }
 
-  if (!ss.getSheetByName(SHEET_ANSWERED)) {
-    const s = ss.insertSheet(SHEET_ANSWERED);
-    // Column 12 used to be a single "IsRead" boolean shared by everyone.
-    // It is now "Read By" - a comma-separated list of the emails of everyone
-    // who has personally marked the ticket read (see the read-tracking helpers below).
-    s.appendRow(["Question", "Event/Wedding Name", "Asked By", "Created", "Answered Date", "Auto Priority", "Turnaround Hours", "Case / Event Link", "Answer", "Status", "Answered By", "Read By"]);
-  }
-
-  if (!ss.getSheetByName(SHEET_TEAM)) {
-    const s = ss.insertSheet(SHEET_TEAM);
-    // PasswordHash / PasswordSalt are only ever read/written server-side and are
-    // NEVER returned by getTeamMembers() - the client never sees a password or hash.
-    s.appendRow(["Name", "Title", "Status", "Category", "Email", "PasswordHash", "PasswordSalt"]);
-    s.appendRow(["Amreen Sultana", "Coordinator", "active", "Coordinator", "asultana@orionphotogroup.com", "", ""]);
-    s.appendRow(["Manjot Bhasin", "Assistant Manager", "active", "Support", "mbhasin@orionphotogroup.com", "", ""]);
-    s.appendRow(["Harshita Jain", "Coordinator", "active", "Coordinator", "hjain@orionphotogroup.com", "", ""]);
-  }
+  return str.split(',').map(s => normalizeDayAbbrev_(s)).filter(Boolean);
 }
 
 // ==========================================
-// ROLE / AUTH HELPERS
+// 2. TEAM & WORKING DAYS MANAGEMENT
 // ==========================================
-// IMPORTANT: This app's "login" is just a dropdown picker on the client, so
-// currentUser on the browser side can never be trusted for permissions - anyone
-// with the URL could open dev tools and call google.script.run functions directly
-// pretending to be anyone. Every privileged server function below therefore
-// re-derives the caller's role from the Team Setup sheet itself before acting.
-// For real access control, deploy this as "Execute as: User accessing" restricted
-// to your Workspace domain and cross-check Session.getActiveUser().getEmail()
-// against the email passed in.
 
-function isSupportMember(member) {
-  if (!member) return false;
-  if (String(member.status).toLowerCase() !== 'active') return false;
-  return member.category === 'Support' || member.category === 'Admin' || SUPERVISOR_TITLES.indexOf(member.title) !== -1;
-}
-
-// Admin is a distinct, higher-trust tier from Support/Supervisor: only Admins
-// may edit or permanently delete question/answer records. Set a team member's
-// Category to "Admin" in the Team Setup tab to grant this.
-function isAdminMember(member) {
-  if (!member) return false;
-  if (String(member.status).toLowerCase() !== 'active') return false;
-  return member.category === 'Admin';
-}
-
-function findTeamMemberByEmail(email) {
-  email = String(email || '').trim().toLowerCase();
-  if (!email) return null;
-  const team = getTeamMembers();
-  return team.find(m => m.email === email) || null;
-}
-
-// Throws unless the email belongs to a recognized, active team member (any role).
-function requireTeamMember(email) {
-  const member = findTeamMemberByEmail(email);
-  if (!member) throw new Error("Access denied: unrecognized or inactive user.");
-  return member;
-}
-
-// Throws unless the email belongs to an active Support / Supervisor-tier member.
-function requireSupportRole(email) {
-  const member = requireTeamMember(email);
-  if (!isSupportMember(member)) {
-    throw new Error("Access denied: this action requires a Supervisor / Support role.");
-  }
-  return member;
-}
-
-// Throws unless the email belongs to an active Admin.
-function requireAdminRole(email) {
-  const member = requireTeamMember(email);
-  if (!isAdminMember(member)) {
-    throw new Error("Access denied: this action requires the Admin role.");
-  }
-  return member;
-}
-
-function getTeamMembers() {
-  ensureSheetsExist();
+function getTeamData() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_TEAM);
-  if (!sheet) return [];
-  const data = sheet.getDataRange().getValues();
-  let team = [];
+  let teamSheet = ss.getSheetByName(TEAM_SHEET);
+  
+  if (!teamSheet) {
+    teamSheet = ss.insertSheet(TEAM_SHEET);
+    teamSheet.appendRow(["Name", "Title", "Status", "Working Days"]);
+  }
+
+  const currentUserEmail = Session.getActiveUser().getEmail().toLowerCase();
+  const data = teamSheet.getDataRange().getValues();
+  const members = [];
+
   for (let i = 1; i < data.length; i++) {
-    if (data[i][0] && String(data[i][0]).trim() !== "") {
-      team.push({
-        rowIndex: i + 1,
-        name: String(data[i][0]).trim(),
-        title: String(data[i][1]).trim(),
-        status: String(data[i][2]).trim(),
-        category: String(data[i][3]).trim(),
-        email: String(data[i][4]).trim().toLowerCase()
-        // NOTE: PasswordHash / PasswordSalt (columns 6-7) are deliberately
-        // omitted here. This function backs the login dropdown and is
-        // callable before anyone is authenticated, so it must never leak
-        // password material to the browser.
+    const name = data[i][0] ? data[i][0].toString().trim() : "";
+    const title = data[i][1] ? data[i][1].toString().trim() : "Coordinator";
+    const status = data[i][2] ? data[i][2].toString().trim() : "Active";
+    const daysRaw = data[i][3] ? data[i][3].toString().trim() : "Mon,Tue,Wed,Thu,Fri";
+
+    if (name && status.toLowerCase() === "active") {
+      members.push({
+        row: i + 1,
+        name: name,
+        title: title,
+        workingDays: parseDaysList_(daysRaw, ["Mon", "Tue", "Wed", "Thu", "Fri"])
       });
     }
   }
-  return team;
+
+  function getRolePriority(title) {
+    const lower = title.toLowerCase();
+    if (lower.includes('manager') || lower.includes('am')) return 1;
+    if (lower.includes('supervisor')) return 2;
+    if (lower.includes('sr.') || lower.includes('senior')) return 3;
+    return 4;
+  }
+
+  members.sort((a, b) => getRolePriority(a.title) - getRolePriority(b.title));
+
+  return {
+    currentUser: { email: currentUserEmail },
+    members: members
+  };
 }
 
-// ---- Password hashing (Admin accounts only) ----
-// Server-side only. The client only ever sends a plaintext password attempt
-// over the call itself (same as any login form); it never receives a hash,
-// salt, or stored password back.
-function hashPassword(password, salt) {
-  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(password) + '::' + String(salt));
-  return Utilities.base64Encode(digest);
-}
-
-// Counts Admins that can actually log in (active + a password has been set).
-// This is deliberately stricter than "any row tagged Admin" - an Admin row
-// with no password yet must not close the bootstrap door, or nobody could
-// ever fix it again.
-function countWorkingAdmins() {
+function saveTeamMember(memberData) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_TEAM);
-  if (!sheet) return 0;
-  const data = sheet.getDataRange().getValues();
-  let count = 0;
-  for (let i = 1; i < data.length; i++) {
-    const category = String(data[i][3] || '').trim();
-    const status = String(data[i][2] || '').trim().toLowerCase();
-    const passwordHash = String(data[i][5] || '').trim();
-    if (category === 'Admin' && status === 'active' && passwordHash) count++;
-  }
-  return count;
-}
+  let teamSheet = ss.getSheetByName(TEAM_SHEET);
+  const daysStr = Array.isArray(memberData.workingDays) ? memberData.workingDays.join(',') : memberData.workingDays;
 
-// Server-only: includes the password hash/salt, unlike getTeamMembers(). Never expose this return value to the client.
-function getTeamMemberRawByEmail(email) {
-  email = String(email || '').trim().toLowerCase();
-  if (!email) return null;
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_TEAM);
-  if (!sheet) return null;
-  const data = sheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][4]).trim().toLowerCase() === email) {
-      return {
-        rowIndex: i + 1,
-        name: String(data[i][0]).trim(),
-        title: String(data[i][1]).trim(),
-        status: String(data[i][2]).trim(),
-        category: String(data[i][3]).trim(),
-        email: email,
-        passwordHash: String(data[i][5] || '').trim(),
-        passwordSalt: String(data[i][6] || '').trim()
-      };
-    }
-  }
-  return null;
-}
-
-// Called at login time whenever the selected profile is an Admin account.
-// Throws on any failure so the client never has to infer "wrong password" vs "no account".
-function verifyAdminPassword(email, passwordAttempt) {
-  const member = getTeamMemberRawByEmail(email);
-  if (!member || String(member.status).toLowerCase() !== 'active') {
-    throw new Error("Access denied: unrecognized or inactive user.");
-  }
-  if (member.category !== 'Admin') {
-    throw new Error("This account is not an Admin account.");
-  }
-  if (!member.passwordHash) {
-    throw new Error("This Admin account has no password set yet. Ask another Admin to set one in Team Setup.");
-  }
-  const attemptHash = hashPassword(passwordAttempt, member.passwordSalt);
-  if (attemptHash !== member.passwordHash) {
-    throw new Error("Incorrect password.");
+  if (memberData.row) {
+    teamSheet.getRange(memberData.row, 1, 1, 4).setValues([[
+      memberData.name,
+      memberData.title,
+      "Active",
+      daysStr
+    ]]);
+  } else {
+    teamSheet.appendRow([memberData.name, memberData.title, "Active", daysStr]);
   }
   return { success: true };
 }
 
-function safeIsoDate(val) {
-  if (!val) return new Date().toISOString();
-  if (val instanceof Date && !isNaN(val.getTime())) {
-    return val.toISOString();
-  }
-  try {
-    const parsed = new Date(val);
-    if (!isNaN(parsed.getTime())) {
-      return parsed.toISOString();
-    }
-  } catch (e) {}
-  return new Date().toISOString();
-}
-
-// forcedPriority comes from the "Auto Priority" column. If the ticket was
-// submitted with "Mark as Urgent Escalation" checked, that column is written
-// as "P1" at submit time and stays P1 forever, regardless of elapsed hours.
-function calculatePriorityAndHours(createdVal, forcedPriority) {
-  if (!createdVal) return { priority: "P4", hoursElapsed: "0.0" };
-  let created = (createdVal instanceof Date) ? createdVal : new Date(createdVal);
-  if (isNaN(created.getTime())) return { priority: "P4", hoursElapsed: "0.0" };
-
-  const now = new Date();
-  const diffHours = (now - created) / (1000 * 60 * 60);
-  const hoursElapsed = Math.max(0, diffHours).toFixed(1);
-
-  const forced = String(forcedPriority || '').trim().toUpperCase();
-  if (forced === 'P1' || forced === 'URGENT') {
-    return { priority: "P1", hoursElapsed: hoursElapsed };
-  }
-
-  let priority = "P4";
-  if (diffHours >= 6) priority = "P1";
-  else if (diffHours >= 3) priority = "P2";
-  else if (diffHours >= 1) priority = "P3";
-
-  return { priority: priority, hoursElapsed: hoursElapsed };
-}
-
-// ---- Per-user "Read By" helpers ----
-// Stored as a comma-separated list of lowercase emails in the "Read By" column.
-// '*' is a legacy marker (from the old shared boolean) meaning "read by everyone".
-function parseReadByList(raw) {
-  if (raw === true) return ['*'];
-  if (!raw) return [];
-  return String(raw).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-}
-function isReadByUser(raw, email) {
-  const list = parseReadByList(raw);
-  if (list.indexOf('*') !== -1) return true;
-  return list.indexOf(String(email || '').trim().toLowerCase()) !== -1;
-}
-
-function getQuestionsData(requestingEmail) {
-  ensureSheetsExist();
-  requireTeamMember(requestingEmail); // must be a recognized logged-in user
-
+function deleteTeamMember(row) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const qSheet = ss.getSheetByName(SHEET_QUESTIONS);
-  const aSheet = ss.getSheetByName(SHEET_ANSWERED);
+  const teamSheet = ss.getSheetByName(TEAM_SHEET);
+  teamSheet.getRange(row, 3).setValue("Inactive");
+  return { success: true };
+}
 
-  let records = [];
+// ==========================================
+// 3. TASK MASTER ENGINE
+// ==========================================
 
-  try {
-    if (qSheet && qSheet.getLastRow() > 1) {
-      const qData = qSheet.getDataRange().getValues();
-      for (let i = 1; i < qData.length; i++) {
-        const row = qData[i];
-        const qText = String(row[0] || "").trim();
-        if (!qText) continue;
+function getTaskMasterSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(TASK_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(TASK_SHEET);
+    sheet.appendRow([
+      "ID", 
+      "Task Name", 
+      "Assigned To", 
+      "Is Recurring", 
+      "Recurring Days", 
+      "Status", 
+      "Completed", 
+      "Last Updated", 
+      "Updated By", 
+      "Task Type", 
+      "Dashboard Name", 
+      "Dashboard Link",
+      "Due Date"
+    ]);
+  } else if (sheet.getRange(1, 13).getValue() !== "Due Date") {
+    // Backward-compatible migration: older sheets won't have the Due Date column yet.
+    sheet.getRange(1, 13).setValue("Due Date");
+  }
+  return sheet;
+}
 
-        const createdIso = safeIsoDate(row[3]);
-        const prioInfo = calculatePriorityAndHours(row[3], row[5]);
+function getAllTasksMaster() {
+  const sheet = getTaskMasterSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
 
-        records.push({
-          id: "Q_" + (i + 1),
-          rowIndex: i + 1,
-          sheet: SHEET_QUESTIONS,
-          question: qText,
-          eventName: String(row[1] || "").trim(),
-          askedBy: String(row[2] || "").trim(),
-          created: createdIso,
-          caseLink: String(row[7] || "").trim(),
-          answer: String(row[8] || "").trim(),
-          status: String(row[9] || "Open").trim(),
-          assignedTo: String(row[10] || "").trim().toLowerCase(),
-          priority: prioInfo.priority,
-          hoursElapsed: prioInfo.hoursElapsed,
-          isRead: true
-        });
+  const data = sheet.getRange(2, 1, lastRow - 1, 13).getValues();
+  const todayDay = getTodayCstDayName_();
+
+  return data.map((row, idx) => {
+    const id = row[0] || (idx + 2);
+    const taskName = row[1] ? row[1].toString().trim() : "";
+    const assignees = row[2] ? row[2].toString().split(',').map(s => s.trim()).filter(Boolean) : [];
+    const isRecurring = Boolean(row[3]);
+    const recurringDays = parseDaysList_(row[4], []);
+    const status = row[5] ? row[5].toString().trim() : "Active";
+    const isActive = status.toLowerCase() === "active";
+    const completed = Boolean(row[6]);
+    const lastUpdatedRaw = row[7] ? new Date(row[7]) : null;
+    const lastUpdated = lastUpdatedRaw && !isNaN(lastUpdatedRaw) ? Utilities.formatDate(lastUpdatedRaw, "America/Chicago", "hh:mm a") : '';
+    const updatedBy = row[8] || '';
+    const taskType = row[9] || 'Report';
+    const dashboardName = row[10] ? row[10].toString().trim() : '';
+    const dashboardLink = row[11] ? row[11].toString().trim() : '';
+
+    // The global "Completed" flag carries no date, but its Last Updated timestamp
+    // does. Reports need to know WHICH day a task was completed for all so a
+    // recurring task finished on Monday shows as pending again on Tuesday.
+    const completedDate = completed && lastUpdatedRaw && !isNaN(lastUpdatedRaw)
+      ? Utilities.formatDate(lastUpdatedRaw, "America/Chicago", "yyyy-MM-dd")
+      : '';
+
+    const dueDateRaw = row[12] ? new Date(row[12]) : null;
+    const hasDueDate = dueDateRaw && !isNaN(dueDateRaw);
+    const dueDate = hasDueDate ? Utilities.formatDate(dueDateRaw, "America/Chicago", "MMM d, yyyy") : '';
+    const dueDateISO = hasDueDate ? Utilities.formatDate(dueDateRaw, "America/Chicago", "yyyy-MM-dd") : '';
+
+    const isScheduledToday = !isRecurring || recurringDays.includes(todayDay);
+
+    return {
+      row: idx + 2,
+      id: id,
+      taskName: taskName,
+      assignedTo: assignees,
+      isRecurring: isRecurring,
+      recurringDays: recurringDays,
+      status: status,
+      isActive: isActive,
+      completed: completed,
+      lastUpdated: lastUpdated,
+      updatedBy: updatedBy,
+      taskType: taskType,
+      dashboardName: dashboardName,
+      dashboardLink: dashboardLink,
+      dueDate: dueDate,
+      dueDateISO: dueDateISO,
+      isScheduledToday: isScheduledToday,
+      completedDate: completedDate
+    };
+  }).filter(t => t.taskName !== "");
+}
+
+function saveTaskMaster(taskData) {
+  const sheet = getTaskMasterSheet();
+  const assigneesStr = Array.isArray(taskData.assignedTo) ? taskData.assignedTo.join(',') : (taskData.assignedTo || '');
+  const daysStr = Array.isArray(taskData.recurringDays) ? taskData.recurringDays.join(',') : (taskData.recurringDays || '');
+  const todayStr = Utilities.formatDate(new Date(), "America/Chicago", "M/d/yyyy HH:mm:ss");
+  const updatedBy = taskData.currentUserName || "Web App";
+  const statusStr = (taskData.isActive === false || taskData.isActive === 'false') ? "Inactive" : "Active";
+  // Due Date only applies to non-recurring tasks; ignore it otherwise so stale dates don't linger.
+  const isRecurringBool = (taskData.isRecurring === true || taskData.isRecurring === 'true');
+  const dueDateStr = (!isRecurringBool && taskData.dueDate) ? taskData.dueDate : "";
+
+  if (taskData.row) {
+    const rowNum = parseInt(taskData.row, 10);
+    sheet.getRange(rowNum, 2, 1, 5).setValues([[
+      taskData.taskName,
+      assigneesStr,
+      taskData.isRecurring,
+      daysStr,
+      statusStr
+    ]]);
+    sheet.getRange(rowNum, 8, 1, 2).setValues([[
+      todayStr,
+      updatedBy
+    ]]);
+    sheet.getRange(rowNum, 10, 1, 3).setValues([[
+      taskData.taskType || "Report",
+      taskData.dashboardName || "",
+      taskData.dashboardLink || ""
+    ]]);
+    sheet.getRange(rowNum, 13, 1, 1).setValues([[dueDateStr]]);
+  } else {
+    const id = "TASK-" + new Date().getTime();
+    sheet.appendRow([
+      id, 
+      taskData.taskName, 
+      assigneesStr, 
+      taskData.isRecurring, 
+      daysStr, 
+      statusStr, 
+      false, 
+      todayStr, 
+      updatedBy, 
+      taskData.taskType || "Report", 
+      taskData.dashboardName || "", 
+      taskData.dashboardLink || "",
+      dueDateStr
+    ]);
+  }
+  return { success: true };
+}
+
+function setTaskActiveStatus(row, isActive, userFullName) {
+  const sheet = getTaskMasterSheet();
+  const statusStr = isActive ? "Active" : "Inactive";
+  const todayStr = Utilities.formatDate(new Date(), "America/Chicago", "M/d/yyyy HH:mm:ss");
+  
+  sheet.getRange(row, 6).setValue(statusStr);
+  sheet.getRange(row, 8).setValue(todayStr);
+  sheet.getRange(row, 9).setValue(userFullName || "System");
+  return { success: true };
+}
+
+function deleteTaskMaster(row) {
+  return setTaskActiveStatus(row, false, "System");
+}
+
+// ==========================================
+// 3b. DUPLICATE TASK DETECTION & CLEANUP
+// ==========================================
+
+// Normalizes a task name for duplicate comparison (trim + lowercase + collapse spaces)
+function normalizeTaskName_(name) {
+  return (name || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Scans the Task Master sheet and returns groups of ACTIVE tasks that share
+// the same (normalized) task name. Each group has 2+ entries.
+// This is used by the "Find & Clean Duplicates" tool in Task Setup.
+function findDuplicateTaskGroups() {
+  const sheet = getTaskMasterSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+
+  const data = sheet.getRange(2, 1, lastRow - 1, 13).getValues();
+  const groups = {};
+
+  data.forEach((row, idx) => {
+    const taskName = row[1] ? row[1].toString().trim() : "";
+    if (!taskName) return;
+
+    const status = row[5] ? row[5].toString().trim() : "Active";
+    if (status.toLowerCase() !== "active") return;
+
+    const key = normalizeTaskName_(taskName);
+    if (!groups[key]) groups[key] = [];
+
+    groups[key].push({
+      row: idx + 2,
+      taskName: taskName,
+      assignedTo: row[2] ? row[2].toString().split(',').map(s => s.trim()).filter(Boolean) : [],
+      dashboardName: row[10] ? row[10].toString().trim() : '',
+      lastUpdated: row[7] ? row[7].toString() : '',
+      updatedBy: row[8] || ''
+    });
+  });
+
+  return Object.keys(groups)
+    .map(key => groups[key])
+    .filter(g => g.length > 1);
+}
+
+// Merges one or more groups of duplicate task rows into a single "keep" row per group,
+// combining assignees + recurring days, then removes the duplicate rows entirely.
+// groups: [{ keepRow: <rowNum>, duplicateRows: [<rowNum>, ...] }, ...]
+function mergeDuplicateTaskGroups(groups) {
+  if (!groups || groups.length === 0) return { success: true, merged: 0 };
+
+  const sheet = getTaskMasterSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { success: true, merged: 0 };
+
+  const allData = sheet.getRange(2, 1, lastRow - 1, 13).getValues();
+  const getRowData = (rowNum) => allData[rowNum - 2];
+
+  const todayStr = Utilities.formatDate(new Date(), "America/Chicago", "M/d/yyyy HH:mm:ss");
+  const rowsToDelete = [];
+
+  groups.forEach(g => {
+    const keepRowNum = parseInt(g.keepRow, 10);
+    const dupRowNums = (g.duplicateRows || []).map(r => parseInt(r, 10)).filter(r => r && r !== keepRowNum);
+    const keepData = getRowData(keepRowNum);
+    if (!keepData) return;
+
+    const allRowNums = [keepRowNum].concat(dupRowNums);
+
+    const mergedAssignees = new Set();
+    const mergedDays = new Set();
+    let mergedIsRecurring = false;
+    let mergedTaskType = '';
+    let mergedDashboardName = '';
+    let mergedDashboardLink = '';
+    let mergedDueDate = '';
+
+    allRowNums.forEach(rn => {
+      const rowData = getRowData(rn);
+      if (!rowData) return;
+
+      const assignees = rowData[2] ? rowData[2].toString().split(',').map(s => s.trim()).filter(Boolean) : [];
+      assignees.forEach(a => mergedAssignees.add(a));
+
+      const isRec = Boolean(rowData[3]);
+      const days = rowData[4] ? rowData[4].toString().split(',').map(s => s.trim()).filter(Boolean) : [];
+      if (isRec) {
+        mergedIsRecurring = true;
+        days.forEach(d => mergedDays.add(d));
       }
-    }
 
-    if (aSheet && aSheet.getLastRow() > 1) {
-      const aData = aSheet.getDataRange().getValues();
-      for (let i = 1; i < aData.length; i++) {
-        const row = aData[i];
-        const qText = String(row[0] || "").trim();
-        if (!qText) continue;
+      if (!mergedTaskType && rowData[9]) mergedTaskType = rowData[9].toString().trim();
+      if (!mergedDashboardName && rowData[10]) mergedDashboardName = rowData[10].toString().trim();
+      if (!mergedDashboardLink && rowData[11]) mergedDashboardLink = rowData[11].toString().trim();
+      if (!mergedDueDate && rowData[12]) mergedDueDate = rowData[12];
+    });
 
-        const createdIso = safeIsoDate(row[3]);
-        const answeredIso = safeIsoDate(row[4]);
+    // Recurring tasks don't carry a Due Date.
+    if (mergedIsRecurring) mergedDueDate = '';
 
-        let turnaround = row[6];
-        if (turnaround === "" || turnaround === undefined || isNaN(turnaround) || Number(turnaround) < 0) {
-          const cDate = new Date(createdIso);
-          const aDate = new Date(answeredIso);
-          const diff = (aDate - cDate) / (1000 * 60 * 60);
-          turnaround = diff > 0 ? diff.toFixed(1) : "0.5";
-        } else {
-          turnaround = Math.abs(Number(turnaround)).toFixed(1);
-        }
+    // A task with no assignee is now invisible in everyone's My Tasks list, so if
+    // ANY duplicate copy had real assignees, those take precedence — the merged
+    // task should still be visible to whoever was actually assigned to work on it.
+    // Only stays unassigned if every single copy was unassigned.
+    const finalAssignees = Array.from(mergedAssignees);
 
-        records.push({
-          id: "A_" + (i + 1),
-          rowIndex: i + 1,
-          sheet: SHEET_ANSWERED,
-          question: qText,
-          eventName: String(row[1] || "").trim(),
-          askedBy: String(row[2] || "").trim(),
-          created: createdIso,
-          answeredDate: answeredIso,
-          turnaroundHours: turnaround,
-          caseLink: String(row[7] || "").trim(),
-          answer: String(row[8] || "").trim(),
-          status: String(row[9] || "Answered").trim(),
-          answeredBy: String(row[10] || "Supervisor").trim(),
-          priority: String(row[5] || "Resolved").trim(),
-          hoursElapsed: 0,
-          // Per-user: reading it as an admin/supervisor never marks it read for the asker,
-          // and vice versa - each person's read state is tracked independently.
-          isRead: isReadByUser(row[11], requestingEmail)
-        });
-      }
-    }
-  } catch (err) {
-    Logger.log("Error in getQuestionsData: " + err.toString());
+    sheet.getRange(keepRowNum, 2, 1, 5).setValues([[
+      keepData[1], // preserve the kept row's original task name text/casing
+      finalAssignees.join(','),
+      mergedIsRecurring,
+      Array.from(mergedDays).join(','),
+      "Active"
+    ]]);
+    sheet.getRange(keepRowNum, 8, 1, 2).setValues([[todayStr, "Duplicate Cleanup"]]);
+    sheet.getRange(keepRowNum, 13, 1, 1).setValues([[mergedDueDate]]);
+    sheet.getRange(keepRowNum, 10, 1, 3).setValues([[
+      mergedTaskType || "Report",
+      mergedDashboardName,
+      mergedDashboardLink
+    ]]);
+
+    dupRowNums.forEach(r => rowsToDelete.push(r));
+  });
+
+  // Delete rows highest-to-lowest so earlier deletions never shift the row
+  // numbers of rows still queued for deletion.
+  const uniqueRowsToDelete = Array.from(new Set(rowsToDelete)).sort((a, b) => b - a);
+  uniqueRowsToDelete.forEach(r => sheet.deleteRow(r));
+
+  return { success: true, merged: uniqueRowsToDelete.length };
+}
+
+function toggleTaskStatus(row, isChecked, userFullName, userTitle, recordsCount) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = getTaskMasterSheet();
+  const logSheet = getLogSheet_();
+  
+  const formattedActor = userTitle ? `${userFullName} (${userTitle})` : userFullName;
+  const timestamp = new Date();
+  const taskName = sheet.getRange(row, 2).getValue();
+
+  sheet.getRange(row, 7).setValue(isChecked);
+  sheet.getRange(row, 8).setValue(timestamp);
+  sheet.getRange(row, 9).setValue(formattedActor);
+
+  const count = isChecked ? parseCount_(recordsCount) : '';
+  logSheet.appendRow([timestamp, formattedActor, "Task Master", taskName, isChecked ? "Completed" : "Removed", count]);
+
+  // Also record the actor's per-day personal status so per-user record counts
+  // resolve in My Tasks rows and the drilldown even for single-assignee tasks
+  // and team-wide completions. A Pending row on uncheck keeps "latest wins" sane.
+  const personalSheet = getPersonalStatusSheet_();
+  personalSheet.appendRow([
+    getTodayCstDateStr_(), row, taskName, userFullName,
+    isChecked ? "Completed" : "Pending", "", timestamp, count
+  ]);
+
+  return { success: true };
+}
+
+// ==========================================
+// 3c. PERSONAL (PER-USER, PER-DAY) TASK STATUS
+// ==========================================
+// Shared/multi-assignee "team report" tasks (e.g. one report covered by any of
+// several Coordinators) need completion tracked per person per day, separate
+// from the task's own shared "Completed" flag — which is reserved for the
+// explicit "Mark Complete for All" action that clears the report from
+// everyone's queue at once. This is an append-only log; the most recent entry
+// for a given (date, row, user) wins.
+
+// Returns "America/Chicago" (CST/CDT) formatted as yyyy-MM-dd, matching what the
+// client computes for "today" so both sides agree on the shift date.
+function getTodayCstDateStr_() {
+  return Utilities.formatDate(new Date(), "America/Chicago", "yyyy-MM-dd");
+}
+
+// Returns today's CST weekday abbreviation ("Sun".."Sat"), computed via pure date
+// math (not locale-dependent formatting) so it always matches the WEEK_DAYS values
+// used throughout the app regardless of the script/account's locale settings.
+function getTodayCstDayName_() {
+  const cstDateStr = getTodayCstDateStr_();
+  const parts = cstDateStr.split("-");
+  const utcDate = new Date(Date.UTC(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)));
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][utcDate.getUTCDay()];
+}
+
+// Normalizes a sheet cell that may have been auto-converted to a Date by Sheets
+// even though it was written as a "yyyy-MM-dd" string.
+function normalizeDateCell_(val) {
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, "America/Chicago", "yyyy-MM-dd");
+  }
+  return (val || "").toString();
+}
+
+function getPersonalStatusSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(PERSONAL_STATUS_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(PERSONAL_STATUS_SHEET);
+    sheet.appendRow(["Date", "Task Row", "Task Name", "User Name", "Status", "Note", "Timestamp", "Records Count"]);
+  } else if (sheet.getLastRow() === 0) {
+    sheet.appendRow(["Date", "Task Row", "Task Name", "User Name", "Status", "Note", "Timestamp", "Records Count"]);
+  } else if (sheet.getRange(1, 8).getValue() !== "Records Count") {
+    sheet.getRange(1, 8).setValue("Records Count");
+  }
+  return sheet;
+}
+
+// Records a personal status for one user on one shared task, for today only.
+// status: "Completed" (I finished my copy) | "Pending" (undo/revert) | "Deferred" (hand-off for today)
+// note: optional free text (e.g. who is covering it, for "Deferred")
+// recordsCount: required for "Completed" status — number of records processed.
+function setPersonalTaskStatus(row, userName, userTitle, status, note, recordsCount) {
+  const sheet = getPersonalStatusSheet_();
+  const taskSheet = getTaskMasterSheet();
+  const taskName = taskSheet.getRange(row, 2).getValue();
+  const todayStr = getTodayCstDateStr_();
+  const timestamp = new Date();
+  const count = status === "Completed" ? parseCount_(recordsCount) : '';
+
+  sheet.appendRow([todayStr, row, taskName, userName, status, note || "", timestamp, count]);
+
+  // Only "Completed" earns Log-sheet credit (feeds the Progress report's per-user
+  // completed count), matching how individual task completions are credited
+  // elsewhere. "Pending" (undo) and "Deferred" (hand-off) are functional-only and
+  // don't need to show up as report activity.
+  if (status === "Completed") {
+    const logSheet = getLogSheet_();
+    const formattedActor = userTitle ? `${userName} (${userTitle})` : userName;
+    logSheet.appendRow([timestamp, formattedActor, "Task Master", taskName, "Completed", count]);
   }
 
-  return records;
-}
-
-function submitQuestion(payload) {
-  ensureSheetsExist();
-  requireTeamMember(payload.askedByEmail); // must be submitted by a recognized user
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_QUESTIONS);
-  const now = new Date();
-
-  sheet.appendRow([
-    payload.question,
-    payload.eventName,
-    payload.askedBy,          // Full Name passed from client, shown in the UI
-    now,
-    "",
-    payload.isUrgent ? "P1" : "",  // Forces top priority permanently when checked
-    "",
-    payload.caseLink,
-    "",
-    "Open",
-    ""                         // Assigned To - starts unassigned
-  ]);
   return { success: true };
 }
 
-function answerQuestion(rowIndex, answerText, supervisorEmail, supervisorName) {
-  requireSupportRole(supervisorEmail); // only Support/Supervisor roles may answer
+// Returns the latest personal status per (task row, user) for a given CST date
+// as a flat array: [{ row, userName, status, note, recordsCount }, ...]
+function getPersonalStatusesForDate_(dateStr) {
+  const sheet = getPersonalStatusSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const qSheet = ss.getSheetByName(SHEET_QUESTIONS);
-  const aSheet = ss.getSheetByName(SHEET_ANSWERED);
+  const data = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
 
-  const rowData = qSheet.getRange(rowIndex, 1, 1, 11).getValues()[0];
-  const now = new Date();
-  const createdDate = rowData[3] ? new Date(rowData[3]) : now;
-  const turnaroundHours = Math.max(0.1, (now - createdDate) / (1000 * 60 * 60)).toFixed(1);
+  const latest = {};
+  data.forEach(r => {
+    const dateValue = normalizeDateCell_(r[0]);
+    if (dateValue !== dateStr) return;
 
-  aSheet.appendRow([
-    rowData[0], // Question
-    rowData[1], // Event Name
-    rowData[2], // Asked By Name
-    rowData[3], // Created
-    now,        // Answered Date
-    "Resolved", // Priority
-    turnaroundHours, // Turnaround Hours
-    rowData[7], // Case Link
-    answerText, // Answer
-    "Answered", // Status
-    supervisorName, // Answered By Name
-    ""          // Read By - empty, i.e. unread for EVERYONE including the asker,
-                // until each person individually opens/marks it
-  ]);
+    const row = r[1];
+    const userName = r[3] ? r[3].toString() : "";
+    if (!userName) return;
+    const status = r[4] ? r[4].toString() : "";
+    const note = r[5] ? r[5].toString() : "";
+    const recordsCount = parseCount_(r[7]);
+    const ts = r[6] instanceof Date ? r[6].getTime() : new Date(r[6]).getTime();
 
-  qSheet.deleteRow(rowIndex);
-  return { success: true };
-}
-
-// Assign an open question to another supervisor as a task. Any active
-// Support/Supervisor-tier member can assign to any other Support/Supervisor-tier
-// member; the ticket then shows up in that person's own Supervisor Desk queue.
-function assignQuestion(rowIndex, assigneeEmail, requestingEmail) {
-  requireSupportRole(requestingEmail);
-  const assignee = requireSupportRole(assigneeEmail);
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const qSheet = ss.getSheetByName(SHEET_QUESTIONS);
-  if (rowIndex < 2 || rowIndex > qSheet.getLastRow()) return { success: false };
-
-  qSheet.getRange(rowIndex, 11).setValue(assignee.email);
-  return { success: true };
-}
-
-// Assign several open questions to a supervisor at once (Supervisor Desk multi-select).
-function assignQuestionsBulk(rowIndexes, assigneeEmail, requestingEmail) {
-  requireSupportRole(requestingEmail);
-  const assignee = requireSupportRole(assigneeEmail);
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const qSheet = ss.getSheetByName(SHEET_QUESTIONS);
-  const lastRow = qSheet.getLastRow();
-  let updated = 0;
-
-  (rowIndexes || []).forEach(raw => {
-    const rowIndex = Number(raw);
-    if (rowIndex >= 2 && rowIndex <= lastRow) {
-      qSheet.getRange(rowIndex, 11).setValue(assignee.email);
-      updated++;
+    const key = row + "|" + userName;
+    if (!latest[key] || ts >= latest[key].ts) {
+      latest[key] = { row: row, userName: userName, status: status, note: note, recordsCount: recordsCount, ts: ts };
     }
   });
 
-  return { success: true, updated: updated };
+  return Object.keys(latest).map(k => {
+    const entry = latest[k];
+    return { row: entry.row, userName: entry.userName, status: entry.status, note: entry.note, recordsCount: entry.recordsCount };
+  });
 }
 
-function unassignQuestion(rowIndex, requestingEmail) {
-  requireSupportRole(requestingEmail);
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const qSheet = ss.getSheetByName(SHEET_QUESTIONS);
-  if (rowIndex < 2 || rowIndex > qSheet.getLastRow()) return { success: false };
-
-  qSheet.getRange(rowIndex, 11).setValue("");
-  return { success: true };
+// Today's per-user statuses (used by the My Tasks view).
+function getTodayPersonalTaskStatuses() {
+  return getPersonalStatusesForDate_(getTodayCstDateStr_());
 }
 
-function toggleReadStatus(rowIndex, isRead, requestingEmail) {
-  requireTeamMember(requestingEmail);
-  const email = String(requestingEmail).trim().toLowerCase();
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const aSheet = ss.getSheetByName(SHEET_ANSWERED);
-  if (!aSheet || rowIndex < 2 || rowIndex > aSheet.getLastRow()) return { success: false };
-
-  const cell = aSheet.getRange(rowIndex, 12);
-  let list = parseReadByList(cell.getValue()).filter(e => e !== '*');
-  if (isRead) {
-    if (list.indexOf(email) === -1) list.push(email);
-  } else {
-    list = list.filter(e => e !== email);
-  }
-  cell.setValue(list.join(', '));
-  return { success: true };
+// Per-user statuses for an arbitrary report date (yyyy-MM-dd, CST). The Daily
+// Reports tab asks for a specific date so pending/completed can be shown for any
+// shift, not just today's.
+function getDailyReportStatuses(dateStr) {
+  const targetDate = dateStr || getTodayCstDateStr_();
+  return getPersonalStatusesForDate_(targetDate);
 }
 
-function saveTeamMember(member, requestingEmail) {
-  ensureSheetsExist();
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_TEAM);
+// Resolves a Log-sheet "User" cell to a canonical team member name. The app
+// writes "Name (Title)" rows; legacy rows hold emails. Emails are matched by
+// looking for a member's surname in the email's local part, but only a unique
+// match is accepted — unmappable or ambiguous rows are ignored rather than
+// guessed, so attribution stays conservative.
+function resolveLogUser_(rawUser, memberNames) {
+  const value = (rawUser || "").toString().trim();
+  if (!value) return "";
 
-  const newCategory = String(member.category || '').trim();
-  const existingCategory = member.rowIndex ? String(sheet.getRange(member.rowIndex, 4).getValue()).trim() : '';
-  const touchesAdmin = newCategory === 'Admin' || existingCategory === 'Admin';
+  let name = value;
+  const parenIdx = name.indexOf(" (");
+  if (parenIdx > 0) name = name.substring(0, parenIdx).trim();
 
-  if (touchesAdmin) {
-    // Bootstrap exception: if there is no Admin at all yet, any Support/Supervisor
-    // may create the very first one. Once an Admin exists, only an Admin can
-    // create further Admins, edit an Admin's row, or rotate an Admin's password.
-    if (countWorkingAdmins() > 0) {
-      requireAdminRole(requestingEmail);
-    } else {
-      requireSupportRole(requestingEmail);
-    }
-  } else {
-    requireSupportRole(requestingEmail); // only Support/Supervisor/Admin roles manage the roster
+  if (memberNames[name]) return name;
+
+  if (name.indexOf("@") > 0) {
+    const local = name.split("@")[0].toLowerCase();
+    const matches = Object.keys(memberNames).filter(n => {
+      const tokens = n.toLowerCase().split(/\s+/);
+      const surname = tokens[tokens.length - 1];
+      return surname.length >= 4 && local.indexOf(surname) !== -1;
+    });
+    return matches.length === 1 ? matches[0] : "";
   }
-
-  let passwordHash = '';
-  let passwordSalt = '';
-  if (member.rowIndex) {
-    const existing = sheet.getRange(member.rowIndex, 1, 1, 7).getValues()[0];
-    passwordHash = existing[5] || '';
-    passwordSalt = existing[6] || '';
-  }
-
-  if (newCategory === 'Admin') {
-    if (member.password) {
-      // A new password was supplied - rotate it. Leaving the field blank on an edit keeps the existing password.
-      passwordSalt = Utilities.getUuid();
-      passwordHash = hashPassword(member.password, passwordSalt);
-    }
-    if (!member.rowIndex && !passwordHash) {
-      throw new Error("A password is required when creating a new Admin account.");
-    }
-  } else {
-    // Not an Admin (anymore) - clear any stored credential.
-    passwordHash = '';
-    passwordSalt = '';
-  }
-
-  const row = [member.name, member.title, member.status, member.category, member.email, passwordHash, passwordSalt];
-
-  if (member.rowIndex) {
-    sheet.getRange(member.rowIndex, 1, 1, 7).setValues([row]);
-  } else {
-    sheet.appendRow(row);
-  }
-  return { success: true };
+  return "";
 }
 
-function deleteTeamMember(rowIndex, requestingEmail) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_TEAM);
-  const targetCategory = (rowIndex >= 2 && rowIndex <= sheet.getLastRow()) ? String(sheet.getRange(rowIndex, 4).getValue()).trim() : '';
+// Per-day completion matrix for a date range (yyyy-MM-dd, CST). For each active
+// team member and each date in the range, counts the tasks they logged as
+// "Completed" in the Log sheet (the app's completion log: Timestamp, User, Sheet
+// Name, Task, Status, Records Count) plus the sum of their record counts. The
+// Personal Task Status sheet is merged in as a fallback for per-user entries.
+// Latest entry wins per (date, user, task) so undo/"Removed" entries are
+// respected. Changing the date range changes what this returns, because the
+// report is derived purely from when each completion was logged by whom.
+function getDailyCompletionReport(dateFrom, dateTo) {
+  const fromStr = dateFrom || getTodayCstDateStr_();
+  const toStr = dateTo || getTodayCstDateStr_();
+  const members = getTeamData().members.map(m => ({ name: m.name, title: m.title }));
+  const memberNames = {};
+  members.forEach(m => { memberNames[m.name] = true; });
 
-  if (targetCategory === 'Admin') {
-    if (countWorkingAdmins() > 0) {
-      requireAdminRole(requestingEmail); // only an Admin can remove another Admin
-    } else {
-      requireSupportRole(requestingEmail); // bootstrap: no working Admin exists, so Support can clean up a broken Admin row
+  // Collapse to the latest status per (date, user, task) across both sheets,
+  // then only count entries whose final status for that day was "Completed".
+  const latest = {};
+  const addEntry = (dateStr, userName, taskName, status, recordsCount, tsMs) => {
+    if (dateStr < fromStr || dateStr > toStr) return;
+    if (!userName || !taskName) return;
+    const key = dateStr + "|" + userName + "|" + taskName;
+    if (!latest[key] || tsMs >= latest[key].ts) {
+      latest[key] = { date: dateStr, userName: userName, taskName: taskName, status: status, recordsCount: recordsCount, ts: tsMs };
     }
-  } else {
-    requireSupportRole(requestingEmail); // only Support/Supervisor/Admin roles manage the roster
+  };
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // 1) Log sheet — primary source. Legacy rows carry an email in the User column,
+  // current app rows carry "Name (Title)".
+  const logSheet = ss.getSheetByName(LOG_SHEET);
+  if (logSheet) {
+    const logRows = logSheet.getLastRow();
+    if (logRows >= 2) {
+      const logCols = Math.max(1, Math.min(logSheet.getLastColumn(), 6));
+      logSheet.getRange(2, 1, logRows - 1, logCols).getValues().forEach(r => {
+        const tsRaw = r[0];
+        const tsDate = tsRaw instanceof Date ? tsRaw : new Date(tsRaw);
+        if (!tsDate || isNaN(tsDate.getTime())) return;
+        const dateStr = Utilities.formatDate(tsDate, "America/Chicago", "yyyy-MM-dd");
+        if (dateStr < fromStr || dateStr > toStr) return;
+        addEntry(
+          dateStr,
+          resolveLogUser_(r[1], memberNames),
+          r[3] ? r[3].toString().trim() : "",
+          r[4] ? r[4].toString().trim() : "",
+          logCols >= 6 ? parseCount_(r[5]) : 0,
+          tsDate.getTime()
+        );
+      });
+    }
   }
 
-  sheet.deleteRow(rowIndex);
-  return { success: true };
+  // 2) Personal Task Status sheet — fallback for per-user entries and record
+  // counts that only exist there.
+  const pSheet = ss.getSheetByName(PERSONAL_STATUS_SHEET);
+  if (pSheet) {
+    const pRows = pSheet.getLastRow();
+    if (pRows >= 2) {
+      pSheet.getRange(2, 1, pRows - 1, 8).getValues().forEach(r => {
+        const dateStr = normalizeDateCell_(r[0]);
+        if (dateStr < fromStr || dateStr > toStr) return;
+        const userName = r[3] ? r[3].toString().trim() : "";
+        if (!memberNames[userName]) return;
+        const tsRaw = r[6] instanceof Date ? r[6].getTime() : new Date(r[6]).getTime();
+        if (isNaN(tsRaw)) return;
+        addEntry(
+          dateStr,
+          userName,
+          r[2] ? r[2].toString().trim() : "",
+          r[4] ? r[4].toString().trim() : "",
+          parseCount_(r[7]),
+          tsRaw
+        );
+      });
+    }
+  }
+
+  // 3) Aggregate completed entries per (date, member), keeping the task list so
+  // the frontend can show per-cell details on click.
+  const dataByDate = {};
+  Object.keys(latest).forEach(k => {
+    const e = latest[k];
+    if (e.status.toLowerCase() !== "completed") return;
+    if (!dataByDate[e.date]) dataByDate[e.date] = {};
+    const u = dataByDate[e.date][e.userName] ||
+      (dataByDate[e.date][e.userName] = { completed: 0, records: 0, tasks: [] });
+    u.completed += 1;
+    u.records += e.recordsCount;
+    u.tasks.push({ taskName: e.taskName, records: e.recordsCount });
+  });
+
+  // 4) Ordered day list built with pure UTC math so the yyyy-MM-dd strings stay
+  // in the same frame as the sheet's dates (no DST/locale drift).
+  const days = [];
+  const startParts = fromStr.split("-");
+  const endParts = toStr.split("-");
+  const start = Date.UTC(parseInt(startParts[0], 10), parseInt(startParts[1], 10) - 1, parseInt(startParts[2], 10));
+  const end = Date.UTC(parseInt(endParts[0], 10), parseInt(endParts[1], 10) - 1, parseInt(endParts[2], 10));
+  for (let t = start; t <= end; t += 86400000) {
+    const d = new Date(t);
+    days.push(d.getUTCFullYear() + "-" + ("0" + (d.getUTCMonth() + 1)).slice(-2) + "-" + ("0" + d.getUTCDate()).slice(-2));
+  }
+
+  return { members: members, days: days, data: dataByDate };
 }
 
 // ==========================================
-// ADMIN-ONLY: EDIT / DELETE QUESTIONS & ANSWERS
-// These act directly on the connected Google Sheet - a delete here is
-// permanent and removes the row from the underlying spreadsheet/database,
-// not just from the app's view.
+// 4. APP INITIALIZATION & REPORTS
 // ==========================================
 
-function updateQuestion(rowIndex, updates, requestingEmail) {
-  requireAdminRole(requestingEmail);
-  updates = updates || {};
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const qSheet = ss.getSheetByName(SHEET_QUESTIONS);
-  if (rowIndex < 2 || rowIndex > qSheet.getLastRow()) return { success: false };
-
-  const current = qSheet.getRange(rowIndex, 1, 1, 11).getValues()[0];
-  const merged = [
-    updates.question !== undefined ? updates.question : current[0],
-    updates.eventName !== undefined ? updates.eventName : current[1],
-    updates.askedBy !== undefined ? updates.askedBy : current[2],
-    current[3], // Created - immutable, preserves accurate priority/turnaround math
-    current[4],
-    updates.isUrgent !== undefined ? (updates.isUrgent ? "P1" : "") : current[5],
-    current[6],
-    updates.caseLink !== undefined ? updates.caseLink : current[7],
-    current[8],
-    current[9],
-    current[10]
-  ];
-  qSheet.getRange(rowIndex, 1, 1, 11).setValues([merged]);
-  return { success: true };
-}
-
-function deleteQuestion(rowIndex, requestingEmail) {
-  requireAdminRole(requestingEmail);
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const qSheet = ss.getSheetByName(SHEET_QUESTIONS);
-  if (rowIndex < 2 || rowIndex > qSheet.getLastRow()) return { success: false };
-  qSheet.deleteRow(rowIndex); // permanent - removes the row from the Questions Tracker sheet
-  return { success: true };
-}
-
-function updateAnswer(rowIndex, updates, requestingEmail) {
-  requireAdminRole(requestingEmail);
-  updates = updates || {};
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const aSheet = ss.getSheetByName(SHEET_ANSWERED);
-  if (rowIndex < 2 || rowIndex > aSheet.getLastRow()) return { success: false };
-
-  const current = aSheet.getRange(rowIndex, 1, 1, 12).getValues()[0];
-  const merged = [
-    updates.question !== undefined ? updates.question : current[0],
-    updates.eventName !== undefined ? updates.eventName : current[1],
-    updates.askedBy !== undefined ? updates.askedBy : current[2],
-    current[3],
-    current[4],
-    current[5],
-    current[6],
-    updates.caseLink !== undefined ? updates.caseLink : current[7],
-    updates.answer !== undefined ? updates.answer : current[8],
-    current[9],
-    updates.answeredBy !== undefined ? updates.answeredBy : current[10],
-    current[11] // Read By - untouched by an edit
-  ];
-  aSheet.getRange(rowIndex, 1, 1, 12).setValues([merged]);
-  return { success: true };
-}
-
-function deleteAnswer(rowIndex, requestingEmail) {
-  requireAdminRole(requestingEmail);
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const aSheet = ss.getSheetByName(SHEET_ANSWERED);
-  if (rowIndex < 2 || rowIndex > aSheet.getLastRow()) return { success: false };
-  aSheet.deleteRow(rowIndex); // permanent - removes the row from the Answered sheet
-  return { success: true };
+function doGet() {
+  return HtmlService.createTemplateFromFile('Index')
+    .evaluate()
+    .setTitle('Dept of Responsibility')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
