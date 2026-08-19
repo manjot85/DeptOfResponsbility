@@ -143,104 +143,19 @@
         <!-- SUB-TAB NAVIGATION HEADER -->
         <div class="bg-white p-2 rounded-2xl border border-slate-200/80 shadow-sm flex flex-wrap justify-between items-center gap-2">
           <div class="inline-flex p-1 bg-slate-100 rounded-xl space-x-1">
-            <button onclick="switchReportSubTab('progress')" id="btn-subtab-progress" class="px-3 py-1.5 bg-white text-indigo-700 font-bold text-xs rounded-lg shadow-sm transition">
-              📊 Task Completion Progress
+            <button onclick="switchReportSubTab('completion')" id="btn-subtab-completion" class="px-3 py-1.5 bg-white text-indigo-700 font-bold text-xs rounded-lg shadow-sm transition">
+              📋 Daily Completion
             </button>
             <button onclick="switchReportSubTab('workload')" id="btn-subtab-workload" class="px-3 py-1.5 text-slate-600 hover:text-slate-900 font-medium text-xs rounded-lg transition">
               ⚖️ Workload Management
             </button>
-            <button onclick="switchReportSubTab('completion')" id="btn-subtab-completion" class="px-3 py-1.5 text-slate-600 hover:text-slate-900 font-medium text-xs rounded-lg transition">
-              📋 Daily Completion
-            </button>
           </div>
           <button onclick="exportReportCSV()" class="px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-semibold text-[11px] rounded-xl border border-indigo-200/60 transition flex items-center gap-1.5">
-            📥 Export Shift Report (CSV)
+            📥 Export Completion Report (CSV)
           </button>
         </div>
 
-        <!-- SUB-TAB 1: TASK COMPLETION PROGRESS -->
-        <div id="subtab-progress-view" class="block space-y-4">
-          <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex flex-wrap items-end gap-4">
-            <div>
-              <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Report Date (CST Shift)</label>
-              <input type="date" id="reportDateFilter" onchange="onReportDateChange()" class="border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:outline-none">
-            </div>
-            <div>
-              <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Filter By Name</label>
-              <select id="reportNameFilter" onchange="onReportNameFilterChange()" class="border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:outline-none">
-                <option value="all">All Team Members</option>
-              </select>
-            </div>
-            <div class="ml-auto">
-              <button onclick="loadReports()" class="text-[11px] text-indigo-600 font-medium hover:text-indigo-800 transition">Refresh Report</button>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
-              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Total Active Assigned Tasks</p>
-              <p id="statTotalActive" class="text-2xl font-extrabold text-indigo-600 mt-0.5">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
-              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Shift Completed Tasks</p>
-              <p id="statCompleted" class="text-2xl font-extrabold text-emerald-600 mt-0.5">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
-              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Shift Records Completed</p>
-              <p id="statRecords" class="text-2xl font-extrabold text-sky-600 mt-0.5">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
-              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Shift Pending Tasks</p>
-              <p id="statPending" class="text-2xl font-extrabold text-amber-500 mt-0.5">0</p>
-            </div>
-          </div>
-
-          <!-- ACTIVE TASKS BY DAY (PROGRESS VIEW) -->
-          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-            <div class="flex justify-between items-center mb-3">
-              <div>
-                <h3 class="text-xs font-bold text-slate-800">Active Tasks by Day (CST Shift)</h3>
-                <p class="text-[10px] text-slate-400">Distribution of active department tasks across the week. Click a day to view its task list.</p>
-              </div>
-            </div>
-            <div id="progressByDayGrid" class="grid grid-cols-4 sm:grid-cols-7 gap-2"></div>
-          </div>
-
-          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 overflow-x-auto">
-            <div class="flex justify-between items-center mb-3">
-              <div>
-                <h3 class="text-xs font-bold text-slate-800">Team Shift Completion Progress</h3>
-                <p class="text-[10px] text-slate-400">Click on any numeric cell to view task details for that team member.</p>
-              </div>
-              <span id="reportDateBadge" class="text-[10px] bg-slate-100 text-slate-600 font-medium px-2 py-0.5 rounded-md">Loading report date...</span>
-            </div>
-
-            <table class="w-full text-left text-[11px] whitespace-nowrap">
-              <thead>
-                <tr class="border-b border-slate-100 text-slate-400 text-[10px] uppercase tracking-wider">
-                  <th class="pb-2.5 font-semibold sortable-th" onclick="toggleSort('progress','name')">Team Member<span class="sort-arrow" id="arrow-progress-name">▲▼</span></th>
-                  <th class="pb-2.5 font-semibold sortable-th" onclick="toggleSort('progress','title')">Title<span class="sort-arrow" id="arrow-progress-title">▲▼</span></th>
-                  <th class="pb-2.5 text-center font-semibold sortable-th" onclick="toggleSort('progress','completed')">Completed Tasks<span class="sort-arrow" id="arrow-progress-completed">▲▼</span></th>
-                  <th class="pb-2.5 text-center font-semibold sortable-th" onclick="toggleSort('progress','records')">Records Count<span class="sort-arrow" id="arrow-progress-records">▲▼</span></th>
-                  <th class="pb-2.5 text-center font-semibold sortable-th" onclick="toggleSort('progress','pending')">Pending Tasks<span class="sort-arrow" id="arrow-progress-pending">▲▼</span></th>
-                  <th class="pb-2.5 text-center font-semibold sortable-th" onclick="toggleSort('progress','totalAssigned')">Total Assigned Tasks<span class="sort-arrow" id="arrow-progress-totalAssigned">▲▼</span></th>
-                  <th class="pb-2.5 text-right font-semibold sortable-th" onclick="toggleSort('progress','rate')">Shift Completion %<span class="sort-arrow" id="arrow-progress-rate">▲▼</span></th>
-                </tr>
-              </thead>
-              <tbody id="userProgressReportTable" class="divide-y divide-slate-100">
-                <tr><td colspan="7" class="py-6 text-center text-slate-400">Loading progress summary...</td></tr>
-              </tbody>
-            </table>
-
-            <!-- FOOTER: TOTAL DEPARTMENT TASKS -->
-            <div class="mt-3 pt-3 border-t border-slate-100 flex justify-between items-center">
-              <span class="text-[11px] font-semibold text-slate-500">Total Department Tasks (Active)</span>
-              <span id="footerTotalDeptTasks" class="text-sm font-extrabold text-indigo-600">0</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- SUB-TAB 2: WORKLOAD MANAGEMENT -->
+        <!-- SUB-TAB: WORKLOAD MANAGEMENT -->
         <div id="subtab-workload-view" class="hidden space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
@@ -295,7 +210,7 @@
         </div>
 
         <!-- SUB-TAB 3: DAILY COMPLETION MATRIX -->
-        <div id="subtab-completion-view" class="hidden space-y-4">
+        <div id="subtab-completion-view" class="block space-y-4">
           <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex flex-wrap items-end gap-4">
             <div>
               <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">From Date (CST Shift)</label>
@@ -317,25 +232,28 @@
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+            <button type="button" onclick="openCompletionMembersDrilldown()" class="text-left bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm hover:border-indigo-300 hover:shadow-md transition cursor-pointer">
               <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Team Members in View</p>
               <p id="completionStatMembers" class="text-2xl font-extrabold text-indigo-600 mt-0.5">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+              <p class="text-[9px] text-indigo-400 font-medium mt-1">Click for details →</p>
+            </button>
+            <button type="button" onclick="openCompletionEntriesDrilldown('completed')" class="text-left bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm hover:border-emerald-300 hover:shadow-md transition cursor-pointer">
               <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Tasks Completed in Range</p>
               <p id="completionStatCompleted" class="text-2xl font-extrabold text-emerald-600 mt-0.5">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+              <p class="text-[9px] text-emerald-500 font-medium mt-1">Click for details →</p>
+            </button>
+            <button type="button" onclick="openCompletionEntriesDrilldown('records')" class="text-left bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm hover:border-sky-300 hover:shadow-md transition cursor-pointer">
               <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Records Completed in Range</p>
               <p id="completionStatRecords" class="text-2xl font-extrabold text-sky-600 mt-0.5">0</p>
-            </div>
+              <p class="text-[9px] text-sky-500 font-medium mt-1">Click for details →</p>
+            </button>
           </div>
 
           <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 overflow-x-auto">
             <div class="flex justify-between items-center mb-3">
               <div>
                 <h3 class="text-xs font-bold text-slate-800">Daily Completion Status by Team Member</h3>
-                <p class="text-[10px] text-slate-400">Tasks logged as Completed in the Personal Task Status sheet, per person per day. Dash = nothing logged that day. Date range changes what's shown.</p>
+                <p class="text-[10px] text-slate-400">Tasks logged as Completed in the Personal Task Status sheet, per person per day. Dash = nothing logged that period. Ranges over 14 days automatically group into weekly columns for readability — click any cell for the day-by-day breakdown.</p>
               </div>
               <span id="completionRangeBadge" class="text-[10px] bg-slate-100 text-slate-600 font-medium px-2 py-0.5 rounded-md">Loading range...</span>
             </div>
@@ -373,9 +291,11 @@
                 <option value="all">All Assignees</option>
                 <option value="none">🎯 No Assignee Only</option>
               </select>
-              <button onclick="toggleGroupByDashboard('mgmt')" id="btn-group-mgmt" class="text-[11px] bg-slate-50 border border-slate-200 rounded-xl px-2 py-1 font-medium text-slate-700 hover:bg-slate-100 transition">
-                🗂️ Group by Dashboard
-              </button>
+              <select id="mgmtGroupFilter" onchange="setGroupMode('mgmt', this.value)" class="text-[11px] bg-slate-50 border border-slate-200 rounded-xl px-2 py-1 font-medium text-slate-700 focus:outline-none">
+                <option value="none">No Grouping</option>
+                <option value="dashboard">🗂️ Group by Dashboard</option>
+                <option value="day">📅 Group by Day</option>
+              </select>
               <button onclick="loadTasks()" class="text-[11px] text-indigo-600 font-medium hover:text-indigo-800 transition">Refresh Master List</button>
             </div>
           </div>
@@ -423,9 +343,11 @@
                 <option value="all">All Assignees</option>
                 <option value="none">🎯 No Assignee Only</option>
               </select>
-              <button onclick="toggleGroupByDashboard('setup')" id="btn-group-setup" class="text-[11px] bg-slate-50 border border-slate-200 rounded-xl px-2 py-1 font-medium text-slate-700 hover:bg-slate-100 transition">
-                🗂️ Group by Dashboard
-              </button>
+              <select id="setupGroupFilter" onchange="setGroupMode('setup', this.value)" class="text-[11px] bg-slate-50 border border-slate-200 rounded-xl px-2 py-1 font-medium text-slate-700 focus:outline-none">
+                <option value="none">No Grouping</option>
+                <option value="dashboard">🗂️ Group by Dashboard</option>
+                <option value="day">📅 Group by Day</option>
+              </select>
               <button onclick="findAndShowDuplicates()" class="text-[11px] bg-amber-50 text-amber-700 border border-amber-200 rounded-xl px-2 py-1 font-semibold hover:bg-amber-100 transition">
                 🧹 Find & Clean Duplicates
               </button>
@@ -783,9 +705,6 @@
       let memberList = [];
       let masterTaskList = [];
       let selectedUser = null;
-      let selectedReportDate = '';
-      let selectedReportName = '';
-      let reportStatusByRow = {};
 
       let completionReport = null;
       let selectedCompletionFrom = '';
@@ -802,14 +721,13 @@
         mgmt:     { col: null, dir: 1 },
         setup:    { col: null, dir: 1 },
         team:     { col: null, dir: 1 },
-        progress: { col: null, dir: 1 },
         workload: { col: null, dir: 1 }
       };
 
       const groupState = {
         myTasks: false,
-        mgmt: false,
-        setup: false
+        mgmt: 'none',
+        setup: 'none'
       };
 
       let duplicateGroupsCache = [];
@@ -884,8 +802,6 @@
           renderTaskSetupTable(filterTasksByAssignee(filterTasksBySchedule(filterTasksByStatus(masterTaskList, setupFilterVal), setupScheduleVal), setupAssigneeVal));
         } else if (tableKey === 'team') {
           loadTeamTable(memberList);
-        } else if (tableKey === 'progress') {
-          renderReports();
         } else if (tableKey === 'workload') {
           renderWorkloadManagement();
         }
@@ -918,6 +834,38 @@
             return a.localeCompare(b);
           })
           .map(label => [label, groups[label]]);
+      }
+
+      // Groups a task list by scheduled weekday (Mon..Sun, in that order). A
+      // recurring task appears under every day it runs on, so totals across
+      // groups can exceed the task count — that's expected for a schedule view.
+      // Non-recurring tasks (one-off / no fixed weekly day) are bucketed under
+      // "No Fixed Day" at the end.
+      function groupTasksByDay(tasks) {
+        const byDay = {};
+        WEEK_DAYS.forEach(d => { byDay[d] = []; });
+        const noFixedDay = [];
+
+        tasks.forEach(t => {
+          if (t.isRecurring && t.recurringDays && t.recurringDays.length > 0) {
+            t.recurringDays.forEach(d => {
+              if (byDay[d]) byDay[d].push(t);
+            });
+          } else {
+            noFixedDay.push(t);
+          }
+        });
+
+        const result = WEEK_DAYS.filter(d => byDay[d].length > 0).map(d => [d, byDay[d]]);
+        if (noFixedDay.length > 0) result.push(['No Fixed Day', noFixedDay]);
+        return result;
+      }
+
+      // Sets the grouping mode ('none' | 'dashboard' | 'day') for the Management
+      // Overview and Task Setup tables and re-renders from cached data.
+      function setGroupMode(tableKey, mode) {
+        groupState[tableKey] = mode;
+        rerenderTable(tableKey);
       }
 
       window.addEventListener('load', function() {
@@ -954,16 +902,6 @@
         return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getUTCDay()];
       }
 
-      // Active tasks scheduled on a given CST date. Mirrors the server's
-      // isScheduledToday: non-recurring tasks run every day; recurring tasks run
-      // only on weekdays included in their recurringDays list.
-      function getTasksScheduledOn(tasks, dateStr) {
-        const day = getCstWeekdayName(dateStr);
-        return (tasks || []).filter(t =>
-          t.isActive === true && (!t.isRecurring || t.recurringDays.includes(day))
-        );
-      }
-
       function updateDualClocks() {
         const now = new Date();
         const cstOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Chicago' };
@@ -989,6 +927,7 @@
         google.script.run
           .withSuccessHandler(data => {
             memberList = (data && data.members) ? data.members : [];
+            populateAssigneeFilters();
 
             if (memberList.length === 0) {
               gatewayDropdown.innerHTML = '<option value="">No active profiles found</option>';
@@ -1014,6 +953,32 @@
             handleTeamDataError(err);
           })
           .getTeamData();
+      }
+
+      // Rebuilds the "Assigned To" filter dropdowns in Task Setup and Management
+      // Overview so each active team member can be picked individually, in
+      // addition to "All Assignees" / "No Assignee Only". Preserves whatever the
+      // person currently has selected if it's still a valid option after the
+      // refresh; otherwise falls back to "All Assignees".
+      function populateAssigneeFilters() {
+        ['mgmtAssigneeFilter', 'setupAssigneeFilter'].forEach(id => {
+          const sel = document.getElementById(id);
+          if (!sel) return;
+
+          const currentVal = sel.value;
+          const memberOptionsHtml = (memberList || [])
+            .map(m => `<option value="${m.name}">${m.name}</option>`)
+            .join('');
+
+          sel.innerHTML = `
+            <option value="all">All Assignees</option>
+            <option value="none">🎯 No Assignee Only</option>
+            ${memberList && memberList.length ? `<optgroup label="Team Members">${memberOptionsHtml}</optgroup>` : ''}
+          `;
+
+          const validValues = ['all', 'none'].concat((memberList || []).map(m => m.name));
+          sel.value = validValues.includes(currentVal) ? currentVal : 'all';
+        });
       }
 
       function handleTeamDataError(err) {
@@ -1101,53 +1066,35 @@
         if (tab === 'my-tasks' || tab === 'management' || tab === 'task-setup') loadTasks();
         if (tab === 'reports') {
           loadTasks();
-          switchReportSubTab('progress');
+          switchReportSubTab('completion');
         }
       }
 
       function switchReportSubTab(sub) {
-        const btnProg = document.getElementById('btn-subtab-progress');
         const btnWork = document.getElementById('btn-subtab-workload');
         const btnComp = document.getElementById('btn-subtab-completion');
-        const viewProg = document.getElementById('subtab-progress-view');
         const viewWork = document.getElementById('subtab-workload-view');
         const viewComp = document.getElementById('subtab-completion-view');
 
-        const progInactive = 'px-3 py-1.5 text-slate-600 hover:text-slate-900 font-medium text-xs rounded-lg transition';
-        const workInactive = 'px-3 py-1.5 text-slate-600 hover:text-slate-900 font-medium text-xs rounded-lg transition';
-        const compInactive = 'px-3 py-1.5 text-slate-600 hover:text-slate-900 font-medium text-xs rounded-lg transition';
+        const inactive = 'px-3 py-1.5 text-slate-600 hover:text-slate-900 font-medium text-xs rounded-lg transition';
         const active = 'px-3 py-1.5 bg-white text-indigo-700 font-bold text-xs rounded-lg shadow-sm transition';
 
         if (sub === 'workload') {
-          viewProg.classList.add('hidden');
           viewComp.classList.add('hidden');
           viewWork.classList.remove('hidden');
 
           btnWork.className = active;
-          btnProg.className = progInactive;
-          btnComp.className = compInactive;
+          btnComp.className = inactive;
 
           loadWorkloadManagement();
-        } else if (sub === 'completion') {
-          viewProg.classList.add('hidden');
+        } else {
           viewWork.classList.add('hidden');
           viewComp.classList.remove('hidden');
 
           btnComp.className = active;
-          btnProg.className = progInactive;
-          btnWork.className = workInactive;
+          btnWork.className = inactive;
 
           loadCompletionReport();
-        } else {
-          viewWork.classList.add('hidden');
-          viewComp.classList.add('hidden');
-          viewProg.classList.remove('hidden');
-
-          btnProg.className = active;
-          btnWork.className = workInactive;
-          btnComp.className = compInactive;
-
-          loadReports();
         }
       }
 
@@ -1248,34 +1195,6 @@
         return entry && entry.recordsCount ? entry.recordsCount : 0;
       }
 
-      // ---- Daily Reports per-date helpers (reportStatusByRow for the chosen date) ----
-
-      function getReportStatusEntry(task, userName) {
-        if (!task) return null;
-        const rowMap = reportStatusByRow[task.row];
-        if (!rowMap) return null;
-        return rowMap[userName] || null;
-      }
-
-      // Is this task "completed" for this member on the chosen report date?
-      // A member is credited when their personal status says Completed for that
-      // date, OR when the task was completed for the whole team on that date
-      // (the global flag's completedDate matches). Recurring tasks finished on an
-      // earlier day correctly show pending again.
-      function isMemberCompleted(task, memberName) {
-        const entry = getReportStatusEntry(task, memberName);
-        if (entry && entry.status === 'Completed') return true;
-        return task.completed === true && task.completedDate === selectedReportDate;
-      }
-
-      // Record count credited to a member for a task on the report date. Only the
-      // completing user's personal status carries a count.
-      function getMemberRecords(task, memberName) {
-        const entry = getReportStatusEntry(task, memberName);
-        if (entry && entry.status === 'Completed') return entry.recordsCount || 0;
-        return 0;
-      }
-
       function filterTasksByStatus(tasks, filterVal) {
         if (filterVal === 'active') {
           return tasks.filter(t => t.isActive === true);
@@ -1296,11 +1215,16 @@
         return tasks;
       }
 
+      // 'all' (default) returns everything; 'none' returns unassigned tasks;
+      // anything else is treated as a specific team member's name, returning
+      // only tasks that person is assigned to.
       function filterTasksByAssignee(tasks, filterVal) {
-        if (filterVal === 'none') {
+        if (!filterVal || filterVal === 'all') {
+          return tasks;
+        } else if (filterVal === 'none') {
           return tasks.filter(t => t.assignedTo.length === 0);
         }
-        return tasks;
+        return tasks.filter(t => t.assignedTo.includes(filterVal));
       }
 
       function renderAllTaskViews(tasks) {
@@ -1384,8 +1308,8 @@
         renderTaskSetupTable(filterTasksByAssignee(filterTasksBySchedule(filterTasksByStatus(masterTaskList, setupFilterVal), setupScheduleVal), setupAssigneeVal));
 
         if (!document.getElementById('tab-reports').classList.contains('hidden')) {
-          if (!document.getElementById('subtab-progress-view').classList.contains('hidden')) {
-            fetchReportStatuses();
+          if (!document.getElementById('subtab-completion-view').classList.contains('hidden')) {
+            loadCompletionReport();
           } else {
             renderWorkloadManagement();
           }
@@ -1626,12 +1550,18 @@
         if (!tbody) return;
 
         const sortedTasks = applySort(tasks, 'mgmt', getTaskSortValue);
+        const mode = groupState.mgmt;
 
         if (sortedTasks.length === 0) {
           tbody.innerHTML = '<tr><td colspan="7" class="py-6 text-center text-slate-400">No master tasks matching filter criteria.</td></tr>';
-        } else if (groupState.mgmt) {
+        } else if (mode === 'dashboard') {
           tbody.innerHTML = groupTasksByDashboard(sortedTasks).map(([label, groupTasks]) => `
             <tr class="group-header-row"><td colspan="7" class="px-2">🗂️ ${label} <span class="normal-case font-medium text-indigo-400">(${groupTasks.length})</span></td></tr>
+            ${groupTasks.map(t => renderMgmtTaskRow(t)).join('')}
+          `).join('');
+        } else if (mode === 'day') {
+          tbody.innerHTML = groupTasksByDay(sortedTasks).map(([label, groupTasks]) => `
+            <tr class="group-header-row"><td colspan="7" class="px-2">📅 ${label} <span class="normal-case font-medium text-indigo-400">(${groupTasks.length})</span></td></tr>
             ${groupTasks.map(t => renderMgmtTaskRow(t)).join('')}
           `).join('');
         } else {
@@ -1664,12 +1594,18 @@
         if (!tbody) return;
 
         const sortedTasks = applySort(tasks, 'setup', getTaskSortValue);
+        const mode = groupState.setup;
 
         if (sortedTasks.length === 0) {
           tbody.innerHTML = '<tr><td colspan="7" class="py-6 text-center text-slate-400">No tasks found matching filter.</td></tr>';
-        } else if (groupState.setup) {
+        } else if (mode === 'dashboard') {
           tbody.innerHTML = groupTasksByDashboard(sortedTasks).map(([label, groupTasks]) => `
             <tr class="group-header-row"><td colspan="7" class="px-2">🗂️ ${label} <span class="normal-case font-medium text-indigo-400">(${groupTasks.length})</span></td></tr>
+            ${groupTasks.map(t => renderSetupTaskRow(t)).join('')}
+          `).join('');
+        } else if (mode === 'day') {
+          tbody.innerHTML = groupTasksByDay(sortedTasks).map(([label, groupTasks]) => `
+            <tr class="group-header-row"><td colspan="7" class="px-2">📅 ${label} <span class="normal-case font-medium text-indigo-400">(${groupTasks.length})</span></td></tr>
             ${groupTasks.map(t => renderSetupTaskRow(t)).join('')}
           `).join('');
         } else {
@@ -2157,85 +2093,12 @@
         setPersonalCompletion(row, false);
       }
 
-      // Reports, the member drilldown modal, Workload Management, and the CSV
-      // export must all agree with what "My Tasks" actually shows a person today —
-      // i.e. active AND scheduled for today's CST day (not just "active, ever
-      // assigned"). A Friday-only task shouldn't count toward anyone's pending
-      // total on a Tuesday. Every report-side calculation routes through this one
-      // helper so they can't drift from each other or from My Tasks.
+      // Workload Management must agree with what "My Tasks" actually shows a
+      // person today — i.e. active AND scheduled for today's CST day (not just
+      // "active, ever assigned"). A Friday-only task shouldn't count toward
+      // anyone's workload total on a Tuesday.
       function getTodayScheduledActiveTasks() {
         return masterTaskList.filter(t => t.isActive === true && t.isScheduledToday === true);
-      }
-
-      function loadReports() {
-        // Fresh task list + per-date statuses for the selected date (defaults to
-        // today in CST), so the summary and the drilldown can never disagree.
-        if (!selectedReportDate) selectedReportDate = getTodayCstDateStr();
-        populateReportNameFilter();
-        const dateInput = document.getElementById('reportDateFilter');
-        if (dateInput) dateInput.value = selectedReportDate;
-        updateReportDateBadge();
-        google.script.run
-          .withSuccessHandler(tasks => {
-            masterTaskList = tasks || [];
-            fetchReportStatuses();
-          })
-          .withFailureHandler(err => console.error("Error loading tasks for reports:", err))
-          .getAllTasksMaster();
-      }
-
-      // Fetch per-date personal statuses for the currently selected report date,
-      // then re-render. Safe to call whenever masterTaskList is already fresh.
-      function fetchReportStatuses() {
-        google.script.run
-          .withSuccessHandler(statuses => {
-            reportStatusByRow = buildReportStatusMap(statuses || []);
-            renderReports();
-          })
-          .withFailureHandler(err => console.error("Error loading report statuses:", err))
-          .getDailyReportStatuses(selectedReportDate);
-      }
-
-      function buildReportStatusMap(statuses) {
-        const map = {};
-        (statuses || []).forEach(s => {
-          if (!s || !s.row) return;
-          if (!map[s.row]) map[s.row] = {};
-          map[s.row][s.userName] = {
-            status: s.status,
-            note: s.note || '',
-            timestamp: s.timestamp || '',
-            recordsCount: s.recordsCount || 0
-          };
-        });
-        return map;
-      }
-
-      function onReportDateChange() {
-        selectedReportDate = document.getElementById('reportDateFilter').value;
-        updateReportDateBadge();
-        fetchReportStatuses();
-      }
-
-      function onReportNameFilterChange() {
-        selectedReportName = document.getElementById('reportNameFilter').value;
-        renderReports();
-      }
-
-      function populateReportNameFilter() {
-        const sel = document.getElementById('reportNameFilter');
-        if (!sel) return;
-        sel.innerHTML = '<option value="">All Team Members</option>' +
-          (memberList || []).map(m => `<option value="${m.name}">${m.name}</option>`).join('');
-      }
-
-      function updateReportDateBadge() {
-        const badge = document.getElementById('reportDateBadge');
-        if (!badge) return;
-        const todayStr = getTodayCstDateStr();
-        badge.innerText = selectedReportDate === todayStr
-          ? `Today (${selectedReportDate})`
-          : selectedReportDate || todayStr;
       }
 
       // ---- Daily Completion matrix (per person per day in a date range) ----
@@ -2352,6 +2215,158 @@
         );
       }
 
+      // ==========================================
+      // WEEK-BUCKET GROUPING (for longer date ranges)
+      // ==========================================
+      // A month-long range would otherwise need ~30 date columns, which never
+      // fits the table width. Past WEEKLY_VIEW_THRESHOLD days, the matrix groups
+      // days into Mon–Sun week buckets instead — a handful of columns that still
+      // scroll cleanly, with the daily breakdown one click away.
+      const WEEKLY_VIEW_THRESHOLD = 14;
+
+      function getMondayOfDateStr(dateStr) {
+        const parts = String(dateStr).split('-').map(Number);
+        const utc = Date.UTC(parts[0], parts[1] - 1, parts[2]);
+        const dow = new Date(utc).getUTCDay(); // 0=Sun..6=Sat
+        const offsetFromMonday = dow === 0 ? 6 : dow - 1;
+        return formatUtcDateStr(new Date(utc - offsetFromMonday * 86400000));
+      }
+
+      function addDaysToDateStr(dateStr, n) {
+        const parts = String(dateStr).split('-').map(Number);
+        const utc = Date.UTC(parts[0], parts[1] - 1, parts[2]) + n * 86400000;
+        return formatUtcDateStr(new Date(utc));
+      }
+
+      function formatUtcDateStr(d) {
+        const pad = n => String(n).padStart(2, '0');
+        return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
+      }
+
+      // Groups an ordered, contiguous list of yyyy-MM-dd day strings into Mon–Sun
+      // week buckets, preserving the order the weeks first appear in.
+      function computeWeekBuckets(days) {
+        const bucketDays = {};
+        const order = [];
+        (days || []).forEach(ds => {
+          const monday = getMondayOfDateStr(ds);
+          if (!bucketDays[monday]) { bucketDays[monday] = []; order.push(monday); }
+          bucketDays[monday].push(ds);
+        });
+        return order.map(monday => {
+          const sunday = addDaysToDateStr(monday, 6);
+          const shortLabel = m => { const [, mm, dd] = m.split('-'); return `${mm}/${dd}`; };
+          return { key: monday, days: bucketDays[monday], label: `${shortLabel(monday)}–${shortLabel(sunday)}` };
+        });
+      }
+
+      // Sums a member's completed/records/tasks across every day in a week bucket.
+      function getWeekCellData(memberName, week) {
+        let completed = 0, records = 0;
+        const tasks = [];
+        week.days.forEach(ds => {
+          const cell = completionReport.data[ds] && completionReport.data[ds][memberName];
+          if (!cell) return;
+          completed += cell.completed;
+          records += cell.records;
+          (cell.tasks || []).forEach(t => tasks.push(Object.assign({ date: ds }, t)));
+        });
+        return { completed, records, tasks };
+      }
+
+      function openCompletionWeekDrilldown(memberName, weekKey) {
+        if (!completionReport) return;
+        const week = computeWeekBuckets(completionReport.days).find(w => w.key === weekKey);
+        if (!week) return;
+        const cellData = getWeekCellData(memberName, week);
+        const rows = cellData.tasks.slice().sort((a, b) => a.date.localeCompare(b.date));
+
+        showTaskListModal(
+          `${memberName} — Week of ${week.label}`,
+          `${cellData.completed} task(s) completed · ${cellData.records} total records`,
+          rows,
+          [
+            { label: 'TASK NAME', render: t => `<span class="font-medium text-slate-800 max-w-[200px] truncate block" title="${t.taskName}">${t.taskName}</span>` },
+            { label: 'DATE', render: t => `<span class="text-slate-500">${t.date}</span>` },
+            { label: 'RECORDS', align: 'right', render: t => `<span class="font-bold text-sky-600">${t.records || 0}</span>` }
+          ]
+        );
+      }
+
+      // ==========================================
+      // SUMMARY-CARD DRILLDOWNS (Daily Completion)
+      // ==========================================
+
+      // Flat list of every individual completion entry currently in view
+      // (respecting the name filter), for the two "in range" summary cards.
+      function getCompletionEntries() {
+        if (!completionReport) return [];
+        const { days, data } = completionReport;
+        const nameFilter = selectedCompletionName && selectedCompletionName !== 'all' ? selectedCompletionName : null;
+        const entries = [];
+        days.forEach(ds => {
+          const dayData = data[ds];
+          if (!dayData) return;
+          Object.keys(dayData).forEach(memberName => {
+            if (nameFilter && memberName !== nameFilter) return;
+            (dayData[memberName].tasks || []).forEach(t => {
+              entries.push({ taskName: t.taskName, member: memberName, date: ds, records: t.records || 0 });
+            });
+          });
+        });
+        return entries;
+      }
+
+      function openCompletionMembersDrilldown() {
+        if (!completionReport) return;
+        const rows = (selectedCompletionName && selectedCompletionName !== 'all')
+          ? completionReport.members.filter(m => m.name === selectedCompletionName)
+          : completionReport.members;
+
+        const stats = rows.map(m => {
+          let completed = 0, records = 0;
+          completionReport.days.forEach(ds => {
+            const cell = completionReport.data[ds] && completionReport.data[ds][m.name];
+            if (cell) { completed += cell.completed; records += cell.records; }
+          });
+          return { name: m.name, title: m.title, completed, records };
+        });
+
+        showTaskListModal(
+          'Team Members in View',
+          `${stats.length} member(s) · ${selectedCompletionFrom} → ${selectedCompletionTo}`,
+          stats,
+          [
+            { label: 'MEMBER', render: s => `<span class="font-medium text-slate-800">${s.name}</span>` },
+            { label: 'TITLE', render: s => `<span class="text-slate-500">${s.title}</span>` },
+            { label: 'COMPLETED', align: 'right', render: s => `<span class="font-bold text-emerald-600">${s.completed}</span>` },
+            { label: 'RECORDS', align: 'right', render: s => `<span class="font-bold text-sky-600">${s.records}</span>` }
+          ]
+        );
+      }
+
+      function openCompletionEntriesDrilldown(emphasis) {
+        let entries = getCompletionEntries();
+        entries = emphasis === 'records'
+          ? entries.slice().sort((a, b) => b.records - a.records)
+          : entries.slice().sort((a, b) => (a.date === b.date ? a.member.localeCompare(b.member) : a.date.localeCompare(b.date)));
+
+        const totalRecords = entries.reduce((sum, e) => sum + e.records, 0);
+        const title = emphasis === 'records' ? 'Records Completed in Range' : 'Tasks Completed in Range';
+
+        showTaskListModal(
+          title,
+          `${entries.length} completion(s) · ${totalRecords} total records · ${selectedCompletionFrom} → ${selectedCompletionTo}`,
+          entries,
+          [
+            { label: 'TASK NAME', render: e => `<span class="font-medium text-slate-800 max-w-[200px] truncate block" title="${e.taskName}">${e.taskName}</span>` },
+            { label: 'MEMBER', render: e => `<span class="text-slate-600">${e.member}</span>` },
+            { label: 'DATE', render: e => `<span class="text-slate-500">${e.date}</span>` },
+            { label: 'RECORDS', align: 'right', render: e => `<span class="font-bold text-sky-600">${e.records || 0}</span>` }
+          ]
+        );
+      }
+
       function renderCompletionReport() {
         if (!completionReport) return;
 
@@ -2364,6 +2379,7 @@
 
         const thead = document.getElementById('completionMatrixHead');
         const tbody = document.getElementById('completionMatrixBody');
+        const rangeBadge = document.getElementById('completionRangeBadge');
 
         if (rows.length === 0 || days.length === 0) {
           thead.innerHTML = '';
@@ -2374,9 +2390,92 @@
           return;
         }
 
+        // Grand totals are always computed from the raw per-day data, regardless
+        // of whether the table below groups those days by week for display.
+        let grandCompleted = 0;
+        let grandRecords = 0;
+        rows.forEach(m => {
+          days.forEach(ds => {
+            const cell = data[ds] && data[ds][m.name];
+            if (cell) { grandCompleted += cell.completed; grandRecords += cell.records; }
+          });
+        });
+
+        document.getElementById('completionStatMembers').innerText = rows.length;
+        document.getElementById('completionStatCompleted').innerText = grandCompleted;
+        document.getElementById('completionStatRecords').innerText = grandRecords;
+
+        const useWeekly = days.length > WEEKLY_VIEW_THRESHOLD;
+
+        if (rangeBadge) {
+          const rangeText = `${selectedCompletionFrom} → ${selectedCompletionTo}${selectedCompletionTo === todayStr ? ' (through today)' : ''}`;
+          rangeBadge.innerText = useWeekly ? `${rangeText} · grouped by week` : rangeText;
+        }
+
+        const stickyFirstCol = 'sticky left-0 bg-white';
+
+        if (useWeekly) {
+          const weeks = computeWeekBuckets(days);
+          const weekTotals = {};
+
+          thead.innerHTML = `
+            <tr class="border-b border-slate-100 text-slate-400 text-[10px] uppercase tracking-wider">
+              <th class="pb-2.5 font-semibold ${stickyFirstCol} pr-3">Team Member</th>
+              ${weeks.map(w => `<th class="pb-2.5 font-semibold text-center" title="${w.days.length} day(s) in this range">Week of<span class="block text-[9px] normal-case font-medium text-slate-400">${w.label}</span></th>`).join('')}
+              <th class="pb-2.5 font-semibold text-center">Range Total</th>
+            </tr>`;
+
+          const bodyRows = rows.map(m => {
+            let rowCompleted = 0, rowRecords = 0;
+            const cells = weeks.map(w => {
+              const cellData = getWeekCellData(m.name, w);
+              if (cellData.completed === 0) {
+                return '<td class="py-2 px-1.5 text-center text-slate-200">—</td>';
+              }
+              weekTotals[w.key] = (weekTotals[w.key] || 0) + cellData.completed;
+              rowCompleted += cellData.completed;
+              rowRecords += cellData.records;
+              const cellLabel = `${m.name} · week of ${w.label} · ${cellData.completed} task(s) completed · ${cellData.records} records · click for details`;
+              return `<td class="py-2 px-1.5 text-center">
+                <button onclick="openCompletionWeekDrilldown('${jsEscape(m.name)}', '${w.key}')" title="${cellLabel}" class="inline-flex flex-col items-center gap-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200/60 rounded-lg px-2 py-1 cursor-pointer transition hover:bg-emerald-100 hover:border-emerald-300 active:scale-95">
+                  <span class="font-bold text-[11px] leading-none">✓ ${cellData.completed}</span>
+                  ${cellData.records ? `<span class="text-[9px] leading-none opacity-70">${cellData.records} rec</span>` : ''}
+                </button>
+              </td>`;
+            }).join('');
+
+            return `
+              <tr class="hover:bg-slate-50/50 transition">
+                <td class="py-2.5 font-semibold text-slate-800 ${stickyFirstCol}">
+                  ${m.name}
+                  <span class="block text-[9px] font-normal text-slate-400">${m.title}</span>
+                </td>
+                ${cells}
+                <td class="py-2.5 text-center">
+                  <span class="font-bold text-indigo-700">${rowCompleted}</span>
+                  ${rowRecords ? `<span class="text-[9px] text-slate-400">· ${rowRecords} rec</span>` : ''}
+                </td>
+              </tr>`;
+          }).join('');
+
+          const totalRow = `
+            <tr class="border-t border-slate-200 bg-slate-50">
+              <td class="py-2.5 font-bold text-slate-700 ${stickyFirstCol} bg-slate-50">${selectedCompletionName && selectedCompletionName !== 'all' ? `Week Totals (${selectedCompletionName})` : 'Week Totals (all members)'}</td>
+              ${weeks.map(w => {
+                const total = weekTotals[w.key] || 0;
+                return `<td class="py-2.5 text-center font-bold ${total ? 'text-emerald-700' : 'text-slate-300'}">${total || '—'}</td>`;
+              }).join('')}
+              <td class="py-2.5 text-center font-extrabold text-indigo-700">${grandCompleted}</td>
+            </tr>`;
+
+          tbody.innerHTML = bodyRows + totalRow;
+          return;
+        }
+
+        // ---- Daily view (range up to WEEKLY_VIEW_THRESHOLD days) ----
         thead.innerHTML = `
           <tr class="border-b border-slate-100 text-slate-400 text-[10px] uppercase tracking-wider">
-            <th class="pb-2.5 font-semibold">Team Member</th>
+            <th class="pb-2.5 font-semibold ${stickyFirstCol} pr-3">Team Member</th>
             ${days.map(ds => {
               const isToday = ds === todayStr;
               const [, mm, dd] = ds.split('-');
@@ -2387,8 +2486,6 @@
           </tr>`;
 
         const dayTotals = {};
-        let grandCompleted = 0;
-        let grandRecords = 0;
 
         const bodyRows = rows.map(m => {
           let rowCompleted = 0;
@@ -2401,9 +2498,7 @@
             }
             dayTotals[ds] = (dayTotals[ds] || 0) + entry.completed;
             rowCompleted += entry.completed;
-            grandCompleted += entry.completed;
             rowRecords += entry.records;
-            grandRecords += entry.records;
             const isToday = ds === todayStr;
             const cellLabel = `${m.name} · ${ds} · ${entry.completed} task(s) completed · ${entry.records} records · click for details`;
             return `<td class="py-2 px-1.5 text-center">
@@ -2416,7 +2511,7 @@
 
           return `
             <tr class="hover:bg-slate-50/50 transition">
-              <td class="py-2.5 font-semibold text-slate-800">
+              <td class="py-2.5 font-semibold text-slate-800 ${stickyFirstCol}">
                 ${m.name}
                 <span class="block text-[9px] font-normal text-slate-400">${m.title}</span>
               </td>
@@ -2430,7 +2525,7 @@
 
         const totalRow = `
           <tr class="border-t border-slate-200 bg-slate-50">
-            <td class="py-2.5 font-bold text-slate-700">${selectedCompletionName && selectedCompletionName !== 'all' ? `Day Totals (${selectedCompletionName})` : 'Day Totals (all members)'}</td>
+            <td class="py-2.5 font-bold text-slate-700 ${stickyFirstCol} bg-slate-50">${selectedCompletionName && selectedCompletionName !== 'all' ? `Day Totals (${selectedCompletionName})` : 'Day Totals (all members)'}</td>
             ${days.map(ds => {
               const total = dayTotals[ds] || 0;
               return `<td class="py-2.5 text-center font-bold ${total ? 'text-emerald-700' : 'text-slate-300'}">${total || '—'}</td>`;
@@ -2439,142 +2534,54 @@
           </tr>`;
 
         tbody.innerHTML = bodyRows + totalRow;
-
-        document.getElementById('completionStatMembers').innerText = rows.length;
-        document.getElementById('completionStatCompleted').innerText = grandCompleted;
-        document.getElementById('completionStatRecords').innerText = grandRecords;
       }
 
-      function renderReports() {
-        const userTbody = document.getElementById('userProgressReportTable');
-        if (!memberList || memberList.length === 0) {
-          userTbody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-slate-400">No team profiles available.</td></tr>';
-          return;
-        }
+      // Default 4-column layout (Task/Type/Status/Dashboard) used by the day-tasks
+      // and single-cell completion drilldowns. Other drilldowns (the summary cards,
+      // week-bucket cells) pass their own `columns` array so the same modal can
+      // show whatever shape of data makes sense for that click.
+      const DEFAULT_DRILLDOWN_COLUMNS = [
+        {
+          label: 'TASK NAME',
+          render: t => `<span class="font-medium text-slate-800 max-w-[220px] truncate block" title="${t.taskName}">${t.taskName}</span>`
+        },
+        {
+          label: 'TYPE',
+          render: t => `<span class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full text-[9px] font-medium border border-slate-200/50">${t.taskType || 'Report'}</span>`
+        },
+        {
+          label: 'STATUS',
+          render: t => t.status === 'Deferred'
+            ? '<span class="px-2 py-0.5 text-[9px] font-bold bg-rose-50 text-rose-600 border border-rose-200/60 rounded-md">Deferred</span>'
+            : ((t.memberCompleted !== undefined ? t.memberCompleted : t.completed)
+              ? `<span class="px-2 py-0.5 text-[9px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-200/60 rounded-md">Completed${t.memberCount ? ` · ${t.memberCount} records` : ''}</span>`
+              : '<span class="px-2 py-0.5 text-[9px] font-bold bg-amber-50 text-amber-600 border border-amber-200/60 rounded-md">Pending</span>')
+        },
+        { label: 'DASHBOARD', align: 'right', render: t => getDashboardLinkHtml(t) }
+      ];
 
-        // Day-aware: only tasks scheduled on the selected date are tallied.
-        const scheduledTasks = getTasksScheduledOn(masterTaskList, selectedReportDate);
-
-        let sumTotalAssigned = 0;
-        let sumCompleted = 0;
-        let sumPending = 0;
-        let sumRecords = 0;
-
-        const memberStats = memberList.map(member => {
-          const memberTasks = scheduledTasks.filter(t => t.assignedTo.includes(member.name));
-
-          const totalAssigned = memberTasks.length;
-          let completedCount = 0;
-          let recordsCount = 0;
-          memberTasks.forEach(t => {
-            if (isMemberCompleted(t, member.name)) {
-              completedCount += 1;
-              recordsCount += getMemberRecords(t, member.name);
-            }
-          });
-          const pendingCount = totalAssigned - completedCount;
-          const rate = totalAssigned > 0 ? Math.min(100, Math.round((completedCount / totalAssigned) * 100)) : 0;
-
-          sumTotalAssigned += totalAssigned;
-          sumCompleted += completedCount;
-          sumPending += pendingCount;
-          sumRecords += recordsCount;
-
-          return {
-            name: member.name,
-            title: member.title,
-            completed: completedCount,
-            records: recordsCount,
-            pending: pendingCount,
-            totalAssigned: totalAssigned,
-            rate: rate
-          };
-        });
-
-        // Name filter (client-side, applies to the table + drilldowns).
-        let filteredStats = memberStats;
-        if (selectedReportName) {
-          filteredStats = memberStats.filter(m => m.name === selectedReportName);
-        }
-
-        document.getElementById('statTotalActive').innerText = sumTotalAssigned;
-        document.getElementById('statCompleted').innerText = sumCompleted;
-        document.getElementById('statPending').innerText = sumPending;
-        document.getElementById('statRecords').innerText = sumRecords;
-
-        const progressState = sortState.progress;
-        let sortedStats = filteredStats;
-        if (progressState && progressState.col) {
-          sortedStats = filteredStats.slice().sort((a, b) => {
-            let va = a[progressState.col], vb = b[progressState.col];
-            if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
-            return compareValues(va, vb) * progressState.dir;
-          });
-        }
-
-        userTbody.innerHTML = sortedStats.map(m => `
-          <tr class="hover:bg-slate-50/50 transition">
-            <td class="py-2.5 font-semibold text-slate-800">${m.name}</td>
-            <td class="py-2.5 text-slate-500">${m.title}</td>
-            <td class="py-2.5 text-center">
-              <button onclick="openTaskDrilldownModal('${m.name}', 'completed', '${selectedReportDate}')" class="px-2 py-0.5 font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/60 rounded-md transition cursor-pointer">
-                ${m.completed}
-              </button>
-            </td>
-            <td class="py-2.5 text-center">
-              <button onclick="openTaskDrilldownModal('${m.name}', 'completed', '${selectedReportDate}')" class="px-2 py-0.5 font-bold text-sky-600 bg-sky-50 hover:bg-sky-100 border border-sky-200/60 rounded-md transition cursor-pointer">
-                ${m.records}
-              </button>
-            </td>
-            <td class="py-2.5 text-center">
-              <button onclick="openTaskDrilldownModal('${m.name}', 'pending', '${selectedReportDate}')" class="px-2 py-0.5 font-bold text-amber-600 bg-amber-50 hover:bg-amber-100 border border-amber-200/60 rounded-md transition cursor-pointer">
-                ${m.pending}
-              </button>
-            </td>
-            <td class="py-2.5 text-center">
-              <button onclick="openTaskDrilldownModal('${m.name}', 'total', '${selectedReportDate}')" class="px-2 py-0.5 font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/60 rounded-md transition cursor-pointer">
-                ${m.totalAssigned}
-              </button>
-            </td>
-            <td class="py-2.5 text-right">
-              <div class="flex items-center justify-end gap-2">
-                <div class="w-16 bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                  <div class="bg-emerald-500 h-1.5 rounded-full" style="width: ${m.rate}%"></div>
-                </div>
-                <span class="text-[10px] font-bold text-slate-600 w-7">${m.rate}%</span>
-              </div>
-            </td>
-          </tr>
-        `).join('');
-
-        renderTasksByDayGrid('progressByDayGrid', computeTasksByDay(masterTaskList));
-
-        const footerEl = document.getElementById('footerTotalDeptTasks');
-        if (footerEl) footerEl.innerText = scheduledTasks.length;
-      }
-
-      function showTaskListModal(title, subtitle, tasks) {
+      // Renders whatever list of rows into the shared drilldown modal. `columns`
+      // is optional — omit it to get the default Task/Type/Status/Dashboard shape
+      // (used by the day-tasks and single-cell drilldowns); pass a custom array
+      // (label + render + optional align) for anything else, like the summary
+      // cards or the weekly completion breakdown.
+      function showTaskListModal(title, subtitle, rows, columns) {
         document.getElementById('drilldownModalTitle').innerText = title;
         document.getElementById('drilldownModalSubtitle').innerText = subtitle;
 
+        const cols = columns || DEFAULT_DRILLDOWN_COLUMNS;
+        const theadRow = document.querySelector('#taskDrilldownModal thead tr');
+        if (theadRow) {
+          theadRow.innerHTML = cols.map(c => `<th class="pb-2 font-semibold px-1 ${c.align === 'right' ? 'text-right' : ''}">${c.label}</th>`).join('');
+        }
+
         const tbody = document.getElementById('drilldownModalTableBody');
-        if (!tasks || tasks.length === 0) {
-          tbody.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-xs text-slate-400">No tasks found.</td></tr>`;
+        if (!rows || rows.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="${cols.length}" class="py-8 text-center text-xs text-slate-400">No records found.</td></tr>`;
         } else {
-          tbody.innerHTML = tasks.map(t => `
+          tbody.innerHTML = rows.map(r => `
             <tr class="hover:bg-slate-50/50 transition">
-              <td class="py-2 px-1 font-medium text-slate-800 max-w-[220px] truncate" title="${t.taskName}">${t.taskName}</td>
-              <td class="py-2 px-1"><span class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full text-[9px] font-medium border border-slate-200/50">${t.taskType || 'Report'}</span></td>
-              <td class="py-2 px-1">
-                ${t.status === 'Deferred'
-                  ? '<span class="px-2 py-0.5 text-[9px] font-bold bg-rose-50 text-rose-600 border border-rose-200/60 rounded-md">Deferred</span>'
-                  : ((t.memberCompleted !== undefined ? t.memberCompleted : t.completed)
-                    ? `<span class="px-2 py-0.5 text-[9px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-200/60 rounded-md">Completed${t.memberCount ? ` · ${t.memberCount} records` : ''}</span>` 
-                    : '<span class="px-2 py-0.5 text-[9px] font-bold bg-amber-50 text-amber-600 border border-amber-200/60 rounded-md">Pending</span>'
-                  )
-                }
-              </td>
-              <td class="py-2 px-1 text-right">${getDashboardLinkHtml(t)}</td>
+              ${cols.map(c => `<td class="py-2 px-1 ${c.align === 'right' ? 'text-right' : ''}">${c.render(r)}</td>`).join('')}
             </tr>
           `).join('');
         }
@@ -2582,44 +2589,14 @@
         document.getElementById('taskDrilldownModal').classList.remove('hidden');
       }
 
-      function openTaskDrilldownModal(memberName, filterType, dateStr) {
-        const targetDate = dateStr || selectedReportDate;
-        const scheduledTasks = getTasksScheduledOn(masterTaskList, targetDate);
-        // Resolve each task's effective completion state for this specific member on
-        // the target date (personal statuses for that date + the global team flag's
-        // completedDate), so the drilldown always matches the summary counts.
-        const memberTasks = scheduledTasks.filter(t => t.assignedTo.includes(memberName)).map(t => {
-          const memberCompleted = isMemberCompleted(t, memberName);
-          const memberCount = memberCompleted ? getMemberRecords(t, memberName) : 0;
-          return Object.assign({}, t, { memberCompleted: memberCompleted, memberCount: memberCount });
-        });
-
-        let displayedTasks = [];
-        let statusLabel = "All Assigned Tasks";
-
-        if (filterType === 'completed') {
-          displayedTasks = memberTasks.filter(t => t.memberCompleted === true);
-          statusLabel = "Completed Tasks";
-        } else if (filterType === 'pending') {
-          displayedTasks = memberTasks.filter(t => t.memberCompleted !== true);
-          statusLabel = "Pending Tasks";
-        } else {
-          displayedTasks = memberTasks;
-          statusLabel = "Total Assigned Tasks";
-        }
-
-        const dateLabel = targetDate === getTodayCstDateStr() ? `${targetDate} (Today)` : targetDate;
-        showTaskListModal(`${memberName} — ${statusLabel}`, `${dateLabel} · Showing ${displayedTasks.length} task(s)`, displayedTasks);
-      }
-
       function closeDrilldownModal() {
         document.getElementById('taskDrilldownModal').classList.add('hidden');
       }
 
       function loadWorkloadManagement() {
-        // Refetch tasks fresh before tallying — same rationale as loadReports():
-        // avoid racing against whatever masterTaskList happened to hold from
-        // elsewhere, which could show a stale total until the next click/refresh.
+        // Refetch tasks fresh before tallying — avoids racing against whatever
+        // masterTaskList happened to hold from elsewhere, which could show a
+        // stale total until the next click/refresh.
         google.script.run
           .withSuccessHandler(tasks => {
             masterTaskList = tasks || [];
@@ -2695,50 +2672,41 @@
       }
 
       function exportReportCSV() {
-        if (!memberList) {
+        if (!completionReport) {
           alert('Report data is loading, please try again in a moment.');
           return;
         }
 
-        const reportDate = selectedReportDate || getTodayCstDateStr();
-        const scheduledTasks = getTasksScheduledOn(masterTaskList, reportDate);
+        const { members, days, data } = completionReport;
+        const rows = (selectedCompletionName && selectedCompletionName !== 'all')
+          ? members.filter(m => m.name === selectedCompletionName)
+          : members;
 
         let csvContent = "data:text/csv;charset=utf-8,";
-        csvContent += `Shift Performance Report (CST Date: ${reportDate})\n`;
-        csvContent += `Team Member,Title,Completed Tasks,Records Count,Pending Tasks,Total Assigned Tasks,Completion Rate\n`;
+        csvContent += `Daily Completion Report (CST: ${selectedCompletionFrom} to ${selectedCompletionTo})\n`;
+        csvContent += `Team Member,Title,${days.join(',')},Range Total (Completed),Range Total (Records)\n`;
 
-        memberList.forEach(m => {
-          const memberTasks = scheduledTasks.filter(t => t.assignedTo.includes(m.name));
-          let completedCount = 0;
-          let recordsCount = 0;
-          memberTasks.forEach(t => {
-            if (isMemberCompleted(t, m.name)) {
-              completedCount += 1;
-              recordsCount += getMemberRecords(t, m.name);
-            }
+        let grandCompleted = 0, grandRecords = 0;
+        rows.forEach(m => {
+          let rowCompleted = 0, rowRecords = 0;
+          const dayVals = days.map(ds => {
+            const cell = data[ds] && data[ds][m.name];
+            const c = cell ? cell.completed : 0;
+            rowCompleted += c;
+            rowRecords += cell ? cell.records : 0;
+            return c;
           });
-          const pendingCount = memberTasks.length - completedCount;
-          const rate = memberTasks.length > 0 ? Math.min(100, Math.round((completedCount / memberTasks.length) * 100)) : 0;
-
-          csvContent += `"${m.name}","${m.title}",${completedCount},${recordsCount},${pendingCount},${memberTasks.length},"${rate}%"`;
-          if (selectedReportName && m.name === selectedReportName) {
-            csvContent += `,FILTERED`;
-          }
-          csvContent += `\n`;
+          grandCompleted += rowCompleted;
+          grandRecords += rowRecords;
+          csvContent += `"${m.name}","${m.title}",${dayVals.join(',')},${rowCompleted},${rowRecords}\n`;
         });
 
-        csvContent += `\nActive Tasks by Day (Department-wide)\n`;
-        csvContent += `Day,Active Task Count\n`;
-        const tasksByDay = computeTasksByDay(scheduledTasks);
-        WEEK_DAYS.forEach(day => {
-          csvContent += `"${day}",${tasksByDay[day].length}\n`;
-        });
-        csvContent += `\nTotal Department Tasks (Active on ${reportDate}),${scheduledTasks.length}\n`;
+        csvContent += `\nRange Totals,,${days.map(() => '').join(',')},${grandCompleted},${grandRecords}\n`;
 
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");
         link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `Shift_Task_Completion_Report_${reportDate}.csv`);
+        link.setAttribute("download", `Daily_Completion_Report_${selectedCompletionFrom}_to_${selectedCompletionTo}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
