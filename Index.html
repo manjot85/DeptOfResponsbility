@@ -1167,33 +1167,33 @@
           .getAllTasksMaster();
       }
 
-      function buildPersonalStatusMap(statuses) {
-        const map = {};
-        (statuses || []).forEach(s => {
-          if (!map[s.row]) map[s.row] = {};
-          map[s.row][s.userName] = { status: s.status, note: s.note, recordsCount: s.recordsCount || 0 };
-        });
-        return map;
-      }
+function buildPersonalStatusMap(statuses) {
+  const map = {};
+  (statuses || []).forEach(s => {
+    if (!map[s.taskId]) map[s.taskId] = {};
+    map[s.taskId][s.userName] = { status: s.status, note: s.note, recordsCount: s.recordsCount };
+  });
+  return map;
+}
 
-      function getMyPersonalStatus(task, userName) {
-        if (!task || task.assignedTo.length <= 1) return null;
-        const rowMap = personalStatusByRow[task.row];
-        if (!rowMap) return null;
-        const entry = rowMap[userName];
-        return entry ? entry.status : null;
-      }
+function getMyPersonalStatus(task, userName) {
+  if (!task || task.assignedTo.length <= 1) return null;
+  const statusMap = personalStatusById[task.id];
+  if (!statusMap) return null;
+  const entry = statusMap[userName];
+  return entry ? entry.status : null;
+}
 
-      // Returns the count of records this user completed for a task today (0 if none).
-      // Unlike getMyPersonalStatus this has no shared-task guard, because single-assignee
-      // completions also write a personal status row carrying the record count.
-      function getMyPersonalCount(task, userName) {
-        if (!task) return 0;
-        const rowMap = personalStatusByRow[task.row];
-        if (!rowMap) return 0;
-        const entry = rowMap[userName];
-        return entry && entry.recordsCount ? entry.recordsCount : 0;
-      }
+// Returns the count of records this user completed for a task today (0 if none).
+// Unlike getMyPersonalStatus this has no shared-task guard, because single-assignee
+// completions also write a personal status row carrying the record count.
+function getMyPersonalCount(task, userName) {
+  if (!task) return 0;
+  const statusMap = personalStatusById[task.id];
+  if (!statusMap) return 0;
+  const entry = statusMap[userName];
+  return entry && entry.recordsCount ? entry.recordsCount : 0;
+}
 
       function filterTasksByStatus(tasks, filterVal) {
         if (filterVal === 'active') {
@@ -1444,24 +1444,22 @@
 
         return `<span class="text-slate-700 font-medium max-w-[200px] truncate block" title="${displayName}">${displayName}</span>`;
       }
+function getAssigneesButtonHtml(task) {
+  const assigneesCount = task.assignedTo.length;
+  if (assigneesCount === 0) return '<span class="text-amber-700 text-[11px] font-medium bg-amber-50 border border-amber-200/60 px-1.5 py-0.5 rounded-md whitespace-nowrap" title="Not visible in anyone\'s My Tasks until assigned">⚠️ No Assignee</span>';
+  return `<button onclick="showAssigneesModal('${task.id}')" class="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 px-2 py-0.5 rounded-md transition whitespace-nowrap">👥 View Assignees (${assigneesCount})</button>`;
+}
 
-      function getAssigneesButtonHtml(task) {
-        const assigneesCount = task.assignedTo.length;
-        if (assigneesCount === 0) return '<span class="text-amber-700 text-[11px] font-medium bg-amber-50 border border-amber-200/60 px-1.5 py-0.5 rounded-md whitespace-nowrap" title="Not visible in anyone\'s My Tasks until assigned">⚠️ No Assignee</span>';
-        return `<button onclick="showAssigneesModal(${task.row})" class="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 px-2 py-0.5 rounded-md transition whitespace-nowrap">👥 View Assignees (${assigneesCount})</button>`;
-      }
-
-      function getScheduleButtonHtml(task) {
-        if (!task.isRecurring) {
-          if (task.dueDate) {
-            return `<span class="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60" title="Due ${task.dueDate}">📆 Due ${task.dueDate}</span>`;
-          }
-          return '<span class="text-slate-400 font-medium text-[11px] italic">No Schedule</span>';
-        }
-        const daysCount = task.recurringDays.length;
-        return `<button onclick="showScheduleModal(${task.row})" class="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 px-2 py-0.5 rounded-md transition whitespace-nowrap">📅 View Days (${daysCount})</button>`;
-      }
-
+function getScheduleButtonHtml(task) {
+  if (!task.isRecurring) {
+    if (task.dueDate) {
+      return `<span class="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60" title="Due ${task.dueDate}">📅 Due ${task.dueDate}</span>`;
+    }
+    return '<span class="text-slate-400 font-medium text-[11px] italic">No Schedule</span>';
+  }
+  const daysCount = task.recurringDays.length;
+  return `<button onclick="showScheduleModal('${task.id}')" class="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 px-2 py-0.5 rounded-md transition whitespace-nowrap">📅 View Days (${daysCount})</button>`;
+}
       function getStatusBadgeHtml(isActive) {
         if (isActive === false) {
           return `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-[9px] font-semibold bg-rose-50 text-rose-600 border border-rose-200/60">Paused / Inactive</span>`;
@@ -1485,24 +1483,24 @@
         // completes it, full stop). Shared/multi-assignee tasks route through a
         // confirmation step so completing your own copy doesn't silently clear it
         // for everyone else on the team.
-        const checkboxOnChange = isShared
-          ? `handleSharedToggle(${t.row}, this.checked, ${t.completed ? 'true' : 'false'}, this)`
-          : `handleToggle(${t.row}, this.checked, this)`;
+const checkboxOnChange = isShared
+    ? `handleSharedToggle('${t.id}', this.checked, ${t.completed ? 'true' : 'false'}, this)`
+    : `handleToggle('${t.id}', this.checked, this)`;
 
-        let extraRow = '';
-        if (myCompleted && myCount > 0) {
-          extraRow += `<div class="mt-0.5 text-[9px] font-semibold text-emerald-600">${myCount} record${myCount === 1 ? '' : 's'} completed</div>`;
-        }
-        if (isShared && myCompleted && !t.completed) {
-          extraRow += `<div class="mt-0.5"><button onclick="promptMarkCompleteForAll(${t.row})" class="text-[9px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline">🌐 Mark Complete for All (Team)</button></div>`;
-        } else if (isShared && myDeferred) {
-          const coveredBy = personalStatusByRow[t.row] && personalStatusByRow[t.row][selectedUser ? selectedUser.name : ''] ? personalStatusByRow[t.row][selectedUser.name].note : '';
-          extraRow += `<div class="mt-0.5 text-[9px] font-medium text-amber-600">⏭ Deferred for today${coveredBy ? ' · covered by ' + coveredBy : ''} · <button onclick="undeferTask(${t.row})" class="hover:underline">Undo</button></div>`;
-        }
+  let extraRow = '';
+  if (myCompleted && myCount > 0) {
+    extraRow += `<div class="mt-0.5 text-[9px] font-semibold text-emerald-600">${myCount} record${myCount === 1 ? '' : 's'} completed</div>`;
+  }
+  if (isShared && myCompleted && !t.completed) {
+    extraRow += `<div class="mt-0.5"><button onclick="promptMarkCompleteForAll('${t.id}')" class="text-[9px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline">🌐 Mark Complete for All (Team)</button></div>`;
+  } else if (isShared && myDeferred) {
+    const coveredBy = personalStatusById[t.id] && personalStatusById[t.id][selectedUser ? selectedUser.name : ''] ? personalStatusById[t.id][selectedUser.name].note : '';
+    extraRow += `<div class="mt-0.5 text-[9px] font-medium text-amber-600">⏩ Deferred for today${coveredBy ? ' · covered by ' + coveredBy : ''} - <button onclick="undeferTask('${t.id}')" class="hover:underline">Undo</button></div>`;
+  }
 
-        const deferBtn = (isShared && !myCompleted && !myDeferred && !t.completed)
-          ? `<button onclick="openDeferModal(${t.row})" title="Hand this off for today without completing it" class="text-slate-400 hover:text-amber-600 text-[10px] ml-1.5 align-middle">⏭</button>`
-          : '';
+  const deferBtn = (isShared && !myCompleted && !myDeferred && !t.completed)
+    ? `<button onclick="openDeferModal('${t.id}')" title="Hand this off for today without completing it" class="text-slate-400 hover:text-amber-600 text-[10px] ml-1.5 align-middle">⏩</button>`
+    : '';
 
         const sharedTag = isShared ? ' <span class="text-[8px] font-semibold text-indigo-400 align-middle" title="Shared task — completing your copy does not clear it for the rest of the team unless you mark it complete for all">👥 SHARED</span>' : '';
 
@@ -1568,26 +1566,25 @@
           tbody.innerHTML = sortedTasks.map(t => renderMgmtTaskRow(t)).join('');
         }
       }
-
-      function renderSetupTaskRow(t) {
-        return `
-          <tr class="hover:bg-slate-50/50 transition">
-            <td class="py-2.5 px-2 font-medium text-slate-800 max-w-[220px] truncate" title="${t.taskName}">${t.taskName}</td>
-            <td class="py-2.5 px-2"><span class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full text-[9px] font-medium border border-slate-200/50">${t.taskType || 'Report'}</span></td>
-            <td class="py-2.5 px-2">${getStatusBadgeHtml(t.isActive)}</td>
-            <td class="py-2.5 px-2">${getDashboardLinkHtml(t)}</td>
-            <td class="py-2.5 px-2">${getAssigneesButtonHtml(t)}</td>
-            <td class="py-2.5 px-2">${getScheduleButtonHtml(t)}</td>
-            <td class="py-2.5 px-2 text-right space-x-2">
-              <button onclick="toggleTaskActiveState(${t.row}, ${!t.isActive})" class="text-amber-600 hover:text-amber-800 font-medium text-[11px]">
-                ${t.isActive ? 'Pause' : 'Activate'}
-              </button>
-              <button onclick="openTaskModal(${t.row})" class="text-indigo-600 hover:text-indigo-800 font-medium text-[11px]">Edit</button>
-              <button onclick="deleteTask(${t.row})" class="text-rose-500 hover:text-rose-700 font-medium text-[11px]">Remove</button>
-            </td>
-          </tr>
-        `;
-      }
+function renderSetupTaskRow(t) {
+  return `
+    <tr class="hover:bg-slate-50/50 transition">
+      <td class="py-2.5 px-2 font-medium text-slate-800 max-w-[220px] truncate" title="${t.taskName}">${t.taskName}</td>
+      <td class="py-2.5 px-2"><span class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full text-[9px] font-medium border border-slate-200/50">${t.taskType || 'Report'}</span></td>
+      <td class="py-2.5 px-2">${getStatusBadgeHtml(t.isActive)}</td>
+      <td class="py-2.5 px-2">${getDashboardLinkHtml(t)}</td>
+      <td class="py-2.5 px-2">${getAssigneesButtonHtml(t)}</td>
+      <td class="py-2.5 px-2">${getScheduleButtonHtml(t)}</td>
+      <td class="py-2.5 px-2 text-right space-x-2">
+        <button onclick="toggleTaskActiveState('${t.id}', ${!t.isActive})" class="text-amber-600 hover:text-amber-800 font-medium text-[11px]">
+          ${t.isActive ? 'Pause' : 'Activate'}
+        </button>
+        <button onclick="openTaskModal('${t.id}')" class="text-indigo-600 hover:text-indigo-800 font-medium text-[11px]">Edit</button>
+        <button onclick="deleteTask('${t.id}')" class="text-rose-500 hover:text-rose-700 font-medium text-[11px]">Remove</button>
+      </td>
+    </tr>
+  `;
+}
 
       function renderTaskSetupTable(tasks) {
         const tbody = document.getElementById('taskSetupTable');
@@ -1642,7 +1639,7 @@
         return masterTaskList.find(t =>
           t.isActive &&
           normalizeTaskNameClient(t.taskName) === normalized &&
-          String(t.row) !== String(excludeRow)
+          String(t.id) !== String(excludeId)
         ) || null;
       }
 
@@ -1677,47 +1674,46 @@
         mergeBtn.classList.remove('hidden');
         subtitle.textContent = `Found ${duplicateGroupsCache.length} duplicate group(s). Pick which entry to keep in each group — the rest will be merged in and removed.`;
 
-        body.innerHTML = duplicateGroupsCache.map((group, gIdx) => `
-          <div class="border border-slate-200 rounded-xl p-3 space-y-2">
-            <div class="text-xs font-bold text-slate-800">"${group[0].taskName}" <span class="text-slate-400 font-medium">(${group.length} copies)</span></div>
-            <div class="space-y-1.5">
-              ${group.map((t, tIdx) => `
-                <label class="flex items-center justify-between gap-2 p-2 bg-slate-50 rounded-lg border border-slate-100 cursor-pointer hover:bg-slate-100/70 transition">
-                  <div class="flex items-center gap-2 min-w-0">
-                    <input type="radio" name="dupKeep_${gIdx}" value="${t.row}" ${tIdx === 0 ? 'checked' : ''} class="dup-keep-radio flex-shrink-0">
-                    <div class="min-w-0">
-                      <div class="text-[11px] font-semibold text-slate-800">Row ${t.row}${tIdx === 0 ? ' <span class="text-emerald-600">(newest)</span>' : ''}</div>
-                      <div class="text-[10px] text-slate-500 truncate">Dashboard: ${t.dashboardName || '—'} • Assigned: ${t.assignedTo.length === 0 ? 'No Assignee' : t.assignedTo.join(', ')}</div>
-                      ${t.assignedTo.length === 0 ? '<div class="text-[9px] text-amber-600 font-medium mt-0.5">⚠️ Won\'t appear in anyone\'s My Tasks until assigned</div>' : ''}
-                    </div>
-                  </div>
-                  <div class="text-[9px] text-slate-400 flex-shrink-0 text-right">${t.lastUpdated ? `Updated ${t.lastUpdated}<br>by ${t.updatedBy || 'System'}` : ''}</div>
-                </label>
-              `).join('')}
+body.innerHTML = duplicateGroupsCache.map((group, gIdx) => `
+  <div class="border border-slate-200 rounded-xl p-3 space-y-2">
+    <div class="text-xs font-bold text-slate-800">${group[0].taskName} <span class="text-slate-400 font-medium">(${group.length} copies)</span></div>
+    <div class="space-y-1.5">
+      ${group.map((t, tIdx) => `
+        <label class="flex items-center justify-between gap-2 p-2 bg-slate-50 rounded-lg border border-slate-100 cursor-pointer hover:bg-slate-100/70 transition">
+          <div class="flex items-center gap-2 min-w-0">
+            <input type="radio" name="dupKeep_${gIdx}" value="${t.id}" ${tIdx === 0 ? 'checked' : ''} class="dup-keep-radio flex-shrink-0">
+            <div class="min-w-0">
+              <div class="text-[11px] font-semibold text-slate-800">Task ID ${t.id} ${tIdx === 0 ? '<span class="text-emerald-600">(newest)</span>' : ''}</div>
+              <div class="text-[10px] text-slate-500 truncate">Dashboard: ${t.dashboardName || '-'} · Assigned: ${t.assignedTo.length === 0 ? 'No Assignee' : t.assignedTo.join(', ')}</div>
+              ${t.assignedTo.length === 0 ? '<div class="text-[9px] text-amber-600 font-medium mt-0.5">⚠️ Won\'t appear in anyone\'s My Tasks until assigned</div>' : ''}
             </div>
           </div>
-        `).join('');
+          <div class="text-[9px] text-slate-400 flex-shrink-0 text-right">${t.lastUpdated ? `Updated ${t.lastUpdated}<br>by ${t.updatedBy || 'System'}` : ''}</div>
+        </label>
+      `).join('')}
+    </div>
+  </div>
+`).join('');
       }
 
       function closeDuplicatesModal() {
         document.getElementById('duplicatesModal').classList.add('hidden');
       }
 
-      function mergeSelectedDuplicates() {
-        if (duplicateGroupsCache.length === 0) return;
+   function mergeSelectedDuplicates() {
+  if (duplicateGroupsCache.length === 0) return;
 
-        const mergeGroups = duplicateGroupsCache.map((group, gIdx) => {
-          const selected = document.querySelector(`input[name="dupKeep_${gIdx}"]:checked`);
-          const keepRow = selected ? selected.value : group[0].row;
-          const duplicateRows = group.map(t => t.row).filter(r => String(r) !== String(keepRow));
-          return { keepRow: keepRow, duplicateRows: duplicateRows };
-        });
+  const mergeGroups = duplicateGroupsCache.map((group, gIdx) => {
+    const selected = document.querySelector(`input[name="dupKeep_${gIdx}"]:checked`);
+    const keepId = selected ? selected.value : group[0].id;
+    const duplicateIds = group.map(t => t.id).filter(id => String(id) !== String(keepId));
+    return { keepId: keepId, duplicateIds: duplicateIds };
+  });
 
-        const totalDuplicates = mergeGroups.reduce((sum, g) => sum + g.duplicateRows.length, 0);
-        if (!confirm(`This will merge ${mergeGroups.length} group(s) and permanently remove ${totalDuplicates} duplicate row(s) from the Task Master sheet. Continue?`)) {
-          return;
-        }
-
+  const totalDuplicates = mergeGroups.reduce((sum, g) => sum + g.duplicateIds.length, 0);
+  if (!confirm(`This will merge ${mergeGroups.length} group(s) and permanently remove ${totalDuplicates} duplicate task(s) from the Task Master sheet. Continue?`)) {
+    return;
+  }
         const mergeBtn = document.getElementById('btnMergeDuplicates');
         mergeBtn.disabled = true;
         mergeBtn.textContent = 'Merging...';
@@ -1743,57 +1739,56 @@
           .setTaskActiveStatus(row, setStatus, selectedUser ? selectedUser.name : 'System');
       }
 
-      function showAssigneesModal(row) {
-        const task = masterTaskList.find(t => t.row === row);
-        if (!task) return;
+function showAssigneesModal(taskId) {
+  const task = masterTaskList.find(t => t.id === taskId);
+  if (!task) return;
 
-        document.getElementById('assigneesModalTitle').innerText = task.taskName;
-        const listEl = document.getElementById('assigneesModalList');
-        
-        if (task.assignedTo.length === 0) {
-          listEl.innerHTML = '<div class="text-[11px] text-amber-600 py-1.5">⚠️ No assignee set — this task won\'t appear in anyone\'s My Tasks list until someone is assigned.</div>';
-        } else {
-          listEl.innerHTML = task.assignedTo.map(name => `
-            <div class="flex items-center justify-between p-1.5 bg-slate-50 rounded-lg text-[11px] font-medium text-slate-700 border border-slate-100">
-              <span>👤 ${name}</span>
-            </div>
-          `).join('');
-        }
+  document.getElementById('assigneesModalTitle').innerText = task.taskName;
+  const listEl = document.getElementById('assigneesModalList');
 
-        document.getElementById('assigneesModal').classList.remove('hidden');
-      }
+  if (task.assignedTo.length === 0) {
+    listEl.innerHTML = '<div class="text-[11px] text-amber-600 py-1.5">⚠️ No assignee set - this task won\'t appear in anyone\'s My Tasks list until someone is assigned.</div>';
+  } else {
+    listEl.innerHTML = task.assignedTo.map(name => `
+      <div class="flex items-center justify-between p-1.5 bg-slate-50 rounded-lg text-[11px] font-medium text-slate-700 border border-slate-100">
+        <span>👤 ${name}</span>
+      </div>
+    `).join('');
+  }
 
-      function closeAssigneesModal() {
-        document.getElementById('assigneesModal').classList.add('hidden');
-      }
+  document.getElementById('assigneesModal').classList.remove('hidden');
+}
 
-      function showScheduleModal(row) {
-        const task = masterTaskList.find(t => t.row === row);
-        if (!task) return;
+function closeAssigneesModal() {
+  document.getElementById('assigneesModal').classList.add('hidden');
+}
 
-        document.getElementById('scheduleModalTitle').innerText = task.taskName;
-        const listEl = document.getElementById('scheduleModalList');
-        
-        if (!task.isRecurring || task.recurringDays.length === 0) {
-          listEl.innerHTML = '<div class="text-[11px] text-slate-400 py-1.5">Marked recurring, but no specific days have been selected yet.</div>';
-        } else {
-          listEl.innerHTML = task.recurringDays.map(day => `
-            <div class="flex items-center justify-between p-1.5 bg-indigo-50/50 rounded-lg text-[11px] font-medium text-indigo-700 border border-indigo-100">
-              <span>📅 ${day}</span>
-            </div>
-          `).join('');
-        }
+function showScheduleModal(taskId) {
+  const task = masterTaskList.find(t => t.id === taskId);
+  if (!task) return;
 
-        document.getElementById('scheduleModal').classList.remove('hidden');
-      }
+  document.getElementById('scheduleModalTitle').innerText = task.taskName;
+  const listEl = document.getElementById('scheduleModalList');
+
+  if (!task.isRecurring || task.recurringDays.length === 0) {
+    listEl.innerHTML = '<div class="text-[11px] text-slate-400 py-1.5">Marked recurring, but no specific days have been selected yet.</div>';
+  } else {
+    listEl.innerHTML = task.recurringDays.map(day => `
+      <div class="flex items-center justify-between p-1.5 bg-indigo-50/50 rounded-lg text-[11px] font-medium text-indigo-700 border border-indigo-100">
+        <span>📅 ${day}</span>
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('scheduleModal').classList.remove('hidden');
+}
 
       function closeScheduleModal() {
         document.getElementById('scheduleModal').classList.add('hidden');
       }
-
-      function openTaskModal(row = null) {
-        document.getElementById('taskRow').value = row || '';
-        const task = row ? masterTaskList.find(t => t.row === row) : null;
+function openTaskModal(taskId = null) {
+  document.getElementById('taskId').value = taskId || '';
+  const task = taskId ? masterTaskList.find(t => t.id === taskId) : null;
 
         document.getElementById('taskModalTitle').innerText = task ? 'Edit Task' : 'Add New Task';
         document.getElementById('taskNameDuplicateWarning').classList.add('hidden');
@@ -1887,12 +1882,11 @@
           alert('Please enter a task name.');
           return;
         }
-
-        const duplicateMatch = findDuplicateTaskByName(taskName, row);
-        if (duplicateMatch) {
-          const proceed = confirm(`A task named "${duplicateMatch.taskName}" already exists (Row ${duplicateMatch.row}).\n\nSave this as a separate duplicate task anyway?\n\nTip: use "Find & Clean Duplicates" in Task Setup afterwards to merge them.`);
-          if (!proceed) return;
-        }
+const duplicateMatch = findDuplicateTaskByName(taskName, taskId);
+  if (duplicateMatch) {
+    const proceed = confirm(`A task named "${duplicateMatch.taskName}" already exists (ID ${duplicateMatch.id}).\n\nSave this as a separate duplicate task anyway?\n\nTip: use "Find & Clean Duplicates" in Task Setup afterwards to merge them.`);
+    if (!proceed) return;
+  }
 
         const assignedTo = Array.from(document.querySelectorAll('.task-assignee-cb:checked')).map(cb => cb.value);
         const isRecurring = document.getElementById('taskIsRecurring').checked;
@@ -1926,31 +1920,19 @@
             .deleteTaskMaster(row);
         }
       }
+function handleToggle(task) {
+  google.script.run.toggleTaskStatus(task.id, 'Completed', '');
+}
 
-      function handleToggle(row, isChecked, arg) {
-        // Checking always requires a record count. If one wasn't supplied yet,
-        // route through the single-task completion modal first.
-        if (isChecked && typeof arg !== 'number') {
-          pendingSingleToggleCheckbox = (arg && arg.tagName) ? arg : null;
-          openSingleCompleteModal(row);
-          return;
-        }
-        google.script.run
-          .withSuccessHandler(() => {
-            loadTasks();
-          })
-          .toggleTaskStatus(row, isChecked, selectedUser.name, selectedUser.title, isChecked ? arg : '');
-      }
-
-      function openSingleCompleteModal(row) {
-        const task = masterTaskList.find(t => t.row === row);
-        if (!task) return;
-        singleCompleteModalRow = row;
-        document.getElementById('singleCompleteModalTaskName').innerText = task.taskName;
-        document.getElementById('singleCompleteCountInput').value = '';
-        document.getElementById('singleCompleteCountError').classList.add('hidden');
-        document.getElementById('singleCompleteModal').classList.remove('hidden');
-      }
+function openSingleCompleteModal(taskId) {
+  const task = masterTaskList.find(t => t.id === taskId);
+  if (!task) return;
+  singleCompleteModalTaskId = taskId;
+  document.getElementById('singleCompleteModalTaskName').innerText = task.taskName;
+  document.getElementById('singleCompleteCountInput').value = '';
+  document.getElementById('singleCompleteCounterError').classList.add('hidden');
+  document.getElementById('singleCompleteModal').classList.remove('hidden');
+}
 
       function closeSingleCompleteModal() {
         document.getElementById('singleCompleteModal').classList.add('hidden');
@@ -2007,17 +1989,17 @@
           .setPersonalTaskStatus(row, selectedUser.name, selectedUser.title, isCompleted ? 'Completed' : 'Pending', '', isCompleted ? recordsCount : '');
       }
 
-      function openMarkDoneModal(row, forceForAll) {
-        const task = masterTaskList.find(t => t.row === row);
-        if (!task) return;
-        markDoneModalRow = row;
-        document.getElementById('markDoneModalTaskName').innerText = task.taskName;
-        document.getElementById('markDoneModalAssignees').innerText = task.assignedTo.join(', ');
-        document.getElementById('markDoneForAllCheckbox').checked = !!forceForAll;
-        document.getElementById('markDoneCountInput').value = '';
-        document.getElementById('markDoneCountError').classList.add('hidden');
-        document.getElementById('markDoneModal').classList.remove('hidden');
-      }
+function openMarkDoneModal(taskId, forceForAll) {
+  const task = masterTaskList.find(t => t.id === taskId);
+  if (!task) return;
+  markDoneModalTaskId = taskId;
+  document.getElementById('markDoneModalTaskName').innerText = task.taskName;
+  document.getElementById('markDoneModalAssignees').innerText = task.assignedTo.join(', ');
+  document.getElementById('markDoneForAllCheckbox').checked = !forceForAll;
+  document.getElementById('markDoneCountInput').value = '';
+  document.getElementById('markDoneCounterError').classList.add('hidden');
+  document.getElementById('markDoneModal').classList.remove('hidden');
+}
 
       function closeMarkDoneModal(reverted) {
         document.getElementById('markDoneModal').classList.add('hidden');
@@ -2059,18 +2041,18 @@
       // HAND OFF / DEFER A SHARED TASK FOR TODAY ONLY
       // ==========================================
 
-      function openDeferModal(row) {
-        const task = masterTaskList.find(t => t.row === row);
-        if (!task) return;
-        deferModalRow = row;
-        document.getElementById('deferModalTaskName').innerText = task.taskName;
+function openDeferModal(taskId) {
+  const task = masterTaskList.find(t => t.id === taskId);
+  if (!task) return;
+  deferModalTaskId = taskId;
+  document.getElementById('deferModalTaskName').innerText = task.taskName;
 
-        const others = task.assignedTo.filter(n => n !== (selectedUser ? selectedUser.name : ''));
-        const select = document.getElementById('deferModalCoveredBy');
-        select.innerHTML = '<option value="">Not specified</option>' + others.map(n => `<option value="${n}">${n}</option>`).join('');
+  const others = task.assignedTo.filter(n => n !== (selectedUser ? selectedUser.name : ''));
+  const select = document.getElementById('deferModalCoveredBy');
+  select.innerHTML = '<option value="">Not specified</option>' + others.map(n => `<option value="${n}">${n}</option>`).join('');
 
-        document.getElementById('deferModal').classList.remove('hidden');
-      }
+  document.getElementById('deferModal').classList.remove('hidden');
+}
 
       function closeDeferModal() {
         document.getElementById('deferModal').classList.add('hidden');
@@ -2736,19 +2718,19 @@
             <td class="py-2.5 px-2 text-slate-500">${m.title}</td>
             <td class="py-2.5 px-2 text-slate-500">${m.workingDays.join(', ')}</td>
             <td class="py-2.5 px-2 text-right space-x-2">
-              <button onclick="openUserModal(${m.row}, '${m.name}', '${m.title}')" class="text-indigo-600 hover:text-indigo-800 font-medium text-[11px]">Edit</button>
-              <button onclick="deleteMember(${m.row})" class="text-rose-500 hover:text-rose-700 font-medium text-[11px]">Deactivate</button>
+              <button onclick="openUserModal('${m.id}', '${m.name}', '${m.title}')" class="text-indigo-600 hover:text-indigo-800 font-medium text-[11px]">Edit</button>
+              <button onclick="deleteMember('${m.id}')" class="text-rose-500 hover:text-rose-700 font-medium text-[11px]">Deactivate</button>
             </td>
           </tr>
         `).join('');
       }
 
-      function openUserModal(row = '', name = '', title = 'Coordinator') {
-        document.getElementById('userRow').value = row;
-        document.getElementById('userNameInput').value = name;
-        document.getElementById('userTitleInput').value = title;
-        
-        const member = row ? memberList.find(m => m.row === row) : null;
+          function openUserModal(memberId = '', name = '', title = 'Coordinator') {
+          document.getElementById('userId').value = memberId;
+          document.getElementById('userNameInput').value = name;
+          document.getElementById('userTitleInput').value = title;
+
+          const member = memberId ? memberList.find(m => m.id === memberId) : null;
         const workDays = member ? member.workingDays : ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
         document.querySelectorAll('.work-day').forEach(cb => {

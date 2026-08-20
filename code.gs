@@ -1,3 +1,20 @@
+/**
+ * Resolves a permanent Task ID to its current sheet row number.
+ * @param {string} taskId - e.g., "TASK-1001"
+ * @returns {number} 1-based row index in Task Master
+ */
+function getRowByTaskId(taskId) {
+  if (!taskId) throw new Error("TaskId is required.");
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Task Master");
+  const ids = sheet.getRange("A2:A" + sheet.getLastRow()).getValues().flat();
+  const index = ids.indexOf(taskId);
+  
+  if (index === -1) {
+    throw new Error(`Task ID "${taskId}" not found in Task Master.`);
+  }
+  return index + 2; // +1 for 0-index offset, +1 for header row
+}
+
 // ==========================================
 // 1. SHEET & CONSTANTS
 // ==========================================
@@ -439,32 +456,55 @@ function mergeDuplicateTaskGroups(groups) {
   return { success: true, merged: uniqueRowsToDelete.length };
 }
 
-function toggleTaskStatus(row, isChecked, userFullName, userTitle, recordsCount) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = getTaskMasterSheet();
-  const logSheet = getLogSheet_();
+// BEFORE: toggleTaskStatus(row, status, note)
+// AFTER:
+function toggleTaskStatus(taskId, status, note) {
+  const row = getRowByTaskId(taskId); // Dynamic lookup
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Task Master");
   
-  const formattedActor = userTitle ? `${userFullName} (${userTitle})` : userFullName;
-  const timestamp = new Date();
-  const taskName = sheet.getRange(row, 2).getValue();
-
-  sheet.getRange(row, 7).setValue(isChecked);
-  sheet.getRange(row, 8).setValue(timestamp);
-  sheet.getRange(row, 9).setValue(formattedActor);
-
-  const count = isChecked ? parseCount_(recordsCount) : '';
-  logSheet.appendRow([timestamp, formattedActor, "Task Master", taskName, isChecked ? "Completed" : "Removed", count]);
-
-  // Also record the actor's per-day personal status so per-user record counts
-  // resolve in My Tasks rows and the drilldown even for single-assignee tasks
-  // and team-wide completions. A Pending row on uncheck keeps "latest wins" sane.
-  const personalSheet = getPersonalStatusSheet_();
-  personalSheet.appendRow([
-    getTodayCstDateStr_(), row, taskName, userFullName,
-    isChecked ? "Completed" : "Pending", "", timestamp, count
+  // 1. Update status on Task Master
+  sheet.getRange(row, 5).setValue(status); // Assuming Col 5 = Status
+  
+  // 2. Append to Personal Task Status Log using TASK ID
+  const logSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Personal Task Status");
+  const taskName = sheet.getRange(row, 2).getValue(); // Col 2 = Task Name
+  
+  logSheet.appendRow([
+    new Date(),          // Date
+    taskId,              // TASK ID (Primary Foreign Key)
+    taskName,            // Task Name Snapshot
+    Session.getActiveUser().getEmail(),
+    status,
+    note,
+    new Date().getTime() // Timestamp
   ]);
+}
 
-  return { success: true };
+function migrateHistoricalLogsToTaskId() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const masterSheet = ss.getSheetByName("Task Master");
+  const logSheet = ss.getSheetByName("Personal Task Status");
+  
+  // Build a Row-to-ID lookup map from Task Master
+  const masterData = masterSheet.getRange("A2:B" + masterSheet.getLastRow()).getValues();
+  const rowToIdMap = {};
+  masterData.forEach((row, idx) => {
+    const actualRow = idx + 2;
+    rowToIdMap[actualRow] = row[0]; // Row number -> Task ID
+  });
+
+  // Update Log rows where Column 2 contains a numeric row reference
+  const logData = logSheet.getRange("B2:B" + logSheet.getLastRow()).getValues();
+  const updatedColumn = logData.map(cell => {
+    const val = cell[0];
+    // If cell contains a row number (numeric), map it to Task ID
+    if (typeof val === 'number' || !isNaN(val)) {
+      return [rowToIdMap[val] || "UNKNOWN_DELETED_TASK"];
+    }
+    return [val]; // Already an ID
+  });
+
+  logSheet.getRange(2, 2, updatedColumn.length, 1).setValues(updatedColumn);
 }
 
 // ==========================================
