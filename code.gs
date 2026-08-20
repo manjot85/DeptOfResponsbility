@@ -15,6 +15,23 @@ function getRowByTaskId(taskId) {
   return index + 2; // +1 for 0-index offset, +1 for header row
 }
 
+
+/**
+ * Finds the sheet row index for a given taskId.
+ * Returns -1 if the taskId is not found.
+ */
+function getTaskRowById(taskId) {
+  if (!taskId) return -1;
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Task Master"); // Adjust sheet name if needed
+  const data = sheet.getRange(1, 1, sheet.getLastRow(), 1).getValues(); // Assumes Task ID is in Column A (col 1)
+  
+  for (let i = 0; i < data.length; i++) {
+    if (String(data[i][0]).trim() === String(taskId).trim()) {
+      return i + 1; // 1-based row index
+    }
+  }
+  return -1;
+}
 // ==========================================
 // 1. SHEET & CONSTANTS
 // ==========================================
@@ -206,7 +223,10 @@ function getAllTasksMaster() {
   const todayDay = getTodayCstDayName_();
 
   return data.map((row, idx) => {
-    const id = row[0] || (idx + 2);
+    // Coerce Col A to String ID or fallback to timestamp-backed unique ID
+    const rawId = row[0] ? String(row[0]).trim() : "";
+    const id = rawId !== "" ? rawId : "TASK-" + (Date.now() + idx);
+
     const taskName = row[1] ? row[1].toString().trim() : "";
     const assignees = row[2] ? row[2].toString().split(',').map(s => s.trim()).filter(Boolean) : [];
     const isRecurring = Boolean(row[3]);
@@ -221,9 +241,6 @@ function getAllTasksMaster() {
     const dashboardName = row[10] ? row[10].toString().trim() : '';
     const dashboardLink = row[11] ? row[11].toString().trim() : '';
 
-    // The global "Completed" flag carries no date, but its Last Updated timestamp
-    // does. Reports need to know WHICH day a task was completed for all so a
-    // recurring task finished on Monday shows as pending again on Tuesday.
     const completedDate = completed && lastUpdatedRaw && !isNaN(lastUpdatedRaw)
       ? Utilities.formatDate(lastUpdatedRaw, "America/Chicago", "yyyy-MM-dd")
       : '';
@@ -236,7 +253,6 @@ function getAllTasksMaster() {
     const isScheduledToday = !isRecurring || recurringDays.includes(todayDay);
 
     return {
-      row: idx + 2,
       id: id,
       taskName: taskName,
       assignedTo: assignees,
@@ -309,19 +325,25 @@ function saveTaskMaster(taskData) {
   return { success: true };
 }
 
-function setTaskActiveStatus(row, isActive, userFullName) {
+function setTaskActiveStatus(taskId, isActive, userFullName) {
   const sheet = getTaskMasterSheet();
+  const rowIndex = getTaskRowById(taskId);
+  if (rowIndex === -1) throw new Error("Task ID not found: " + taskId);
+
   const statusStr = isActive ? "Active" : "Inactive";
   const todayStr = Utilities.formatDate(new Date(), "America/Chicago", "M/d/yyyy HH:mm:ss");
-  
-  sheet.getRange(row, 6).setValue(statusStr);
-  sheet.getRange(row, 8).setValue(todayStr);
-  sheet.getRange(row, 9).setValue(userFullName || "System");
+
+  sheet.getRange(rowIndex, 6).setValue(statusStr);
+  sheet.getRange(rowIndex, 8).setValue(todayStr);
+  if (userFullName) {
+    sheet.getRange(rowIndex, 9).setValue(userFullName);
+  }
+
   return { success: true };
 }
 
-function deleteTaskMaster(row) {
-  return setTaskActiveStatus(row, false, "System");
+function deleteTaskMaster(taskId) {
+  return setTaskActiveStatus(taskId, false, "System");
 }
 
 // ==========================================
@@ -379,16 +401,19 @@ function mergeDuplicateTaskGroups(groups) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return { success: true, merged: 0 };
 
-  const allData = sheet.getRange(2, 1, lastRow - 1, 13).getValues();
-  const getRowData = (rowNum) => allData[rowNum - 2];
-
   const todayStr = Utilities.formatDate(new Date(), "America/Chicago", "M/d/yyyy HH:mm:ss");
   const rowsToDelete = [];
 
   groups.forEach(g => {
-    const keepRowNum = parseInt(g.keepRow, 10);
-    const dupRowNums = (g.duplicateRows || []).map(r => parseInt(r, 10)).filter(r => r && r !== keepRowNum);
-    const keepData = getRowData(keepRowNum);
+    const keepId = String(g.keepId || g.keepRow || '').trim();
+    const dupIds = (g.duplicateIds || g.duplicateRows || []).map(id => String(id).trim()).filter(id => id && id !== keepId);
+
+    const keepRowNum = getTaskRowById(keepId);
+    if (keepRowNum === -1) return;
+
+    // Resolve dynamic row numbers for duplicate tasks
+    const dupRowNums = dupIds.map(id => getTaskRowById(id)).filter(r => r !== -1 && r !== keepRowNum);
+    const keepData = sheet.getRange(keepRowNum, 1, 1, 13).getValues()[0];
     if (!keepData) return;
 
     const allRowNums = [keepRowNum].concat(dupRowNums);
@@ -402,7 +427,7 @@ function mergeDuplicateTaskGroups(groups) {
     let mergedDueDate = '';
 
     allRowNums.forEach(rn => {
-      const rowData = getRowData(rn);
+      const rowData = sheet.getRange(rn, 1, 1, 13).getValues()[0];
       if (!rowData) return;
 
       const assignees = rowData[2] ? rowData[2].toString().split(',').map(s => s.trim()).filter(Boolean) : [];
@@ -421,17 +446,12 @@ function mergeDuplicateTaskGroups(groups) {
       if (!mergedDueDate && rowData[12]) mergedDueDate = rowData[12];
     });
 
-    // Recurring tasks don't carry a Due Date.
     if (mergedIsRecurring) mergedDueDate = '';
 
-    // A task with no assignee is now invisible in everyone's My Tasks list, so if
-    // ANY duplicate copy had real assignees, those take precedence — the merged
-    // task should still be visible to whoever was actually assigned to work on it.
-    // Only stays unassigned if every single copy was unassigned.
     const finalAssignees = Array.from(mergedAssignees);
 
     sheet.getRange(keepRowNum, 2, 1, 5).setValues([[
-      keepData[1], // preserve the kept row's original task name text/casing
+      keepData[1], // preserve keep row's task name
       finalAssignees.join(','),
       mergedIsRecurring,
       Array.from(mergedDays).join(','),
@@ -448,63 +468,105 @@ function mergeDuplicateTaskGroups(groups) {
     dupRowNums.forEach(r => rowsToDelete.push(r));
   });
 
-  // Delete rows highest-to-lowest so earlier deletions never shift the row
-  // numbers of rows still queued for deletion.
+  // Sort row numbers descending so row deletion does not alter earlier row offsets
   const uniqueRowsToDelete = Array.from(new Set(rowsToDelete)).sort((a, b) => b - a);
   uniqueRowsToDelete.forEach(r => sheet.deleteRow(r));
 
   return { success: true, merged: uniqueRowsToDelete.length };
 }
 
-// BEFORE: toggleTaskStatus(row, status, note)
-// AFTER:
 function toggleTaskStatus(taskId, status, note) {
-  const row = getRowByTaskId(taskId); // Dynamic lookup
+  const rowIndex = getTaskRowById(taskId);
+  if (rowIndex === -1) throw new Error("Task ID not found: " + taskId);
+
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Task Master");
   
-  // 1. Update status on Task Master
-  sheet.getRange(row, 5).setValue(status); // Assuming Col 5 = Status
-  
-  // 2. Append to Personal Task Status Log using TASK ID
-  const logSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Personal Task Status");
-  const taskName = sheet.getRange(row, 2).getValue(); // Col 2 = Task Name
-  
-  logSheet.appendRow([
-    new Date(),          // Date
-    taskId,              // TASK ID (Primary Foreign Key)
-    taskName,            // Task Name Snapshot
-    Session.getActiveUser().getEmail(),
-    status,
-    note,
-    new Date().getTime() // Timestamp
-  ]);
+  // Example mapping: Adjust column indices below to match your actual "Task Master" sheet structure
+  // Column 7 = Status, Column 8 = Note/Completion Record, Column 9 = Last Updated
+  sheet.getRange(rowIndex, 7).setValue(status);
+  if (note !== undefined && note !== null) {
+    sheet.getRange(rowIndex, 8).setValue(note);
+  }
+  sheet.getRange(rowIndex, 9).setValue(new Date());
+
+  return { success: true, taskId: taskId };
 }
 
+function saveTask(taskData) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Task Master");
+  const userEmail = Session.getActiveUser().getEmail() || "System";
+  const now = new Date();
+
+  // Format array fields into comma-separated strings for Google Sheets
+  const assigneesStr = Array.isArray(taskData.assignedTo) ? taskData.assignedTo.join(", ") : (taskData.assignedTo || "");
+  const recDaysStr = Array.isArray(taskData.recurringDays) ? taskData.recurringDays.join(", ") : (taskData.recurringDays || "");
+
+  if (taskData.id) {
+    // EDIT EXISTING TASK
+    const rowIndex = getTaskRowById(taskData.id);
+    if (rowIndex === -1) throw new Error("Cannot edit. Task ID not found: " + taskData.id);
+
+    // Update individual cells matching your Task Master column mapping
+    sheet.getRange(rowIndex, 2).setValue(taskData.taskName);
+    sheet.getRange(rowIndex, 3).setValue(taskData.taskType || "Report");
+    sheet.getRange(rowIndex, 4).setValue(taskData.dashboardName);
+    sheet.getRange(rowIndex, 5).setValue(taskData.dashboardUrl);
+    sheet.getRange(rowIndex, 6).setValue(assigneesStr);
+    sheet.getRange(rowIndex, 7).setValue(taskData.isRecurring ? "Yes" : "No");
+    sheet.getRange(rowIndex, 8).setValue(recDaysStr);
+    sheet.getRange(rowIndex, 9).setValue(taskData.isActive ? "Active" : "Paused");
+    sheet.getRange(rowIndex, 10).setValue(now);
+    sheet.getRange(rowIndex, 11).setValue(userEmail);
+  } else {
+    // CREATE NEW TASK
+    const newTaskId = "TASK-" + Date.now(); // Generate unique immutable ID
+    sheet.appendRow([
+      newTaskId,                  // Col 1: Task ID
+      taskData.taskName,          // Col 2: Task Name
+      taskData.taskType || "Report", // Col 3: Task Type
+      taskData.dashboardName,     // Col 4: Dashboard Name
+      taskData.dashboardUrl,      // Col 5: Dashboard Link
+      assigneesStr,               // Col 6: Assignees
+      taskData.isRecurring ? "Yes" : "No", // Col 7: Recurring
+      recDaysStr,                 // Col 8: Recurring Days
+      taskData.isActive ? "Active" : "Paused", // Col 9: Status
+      now,                        // Col 10: Last Updated
+      userEmail                   // Col 11: Updated By
+    ]);
+  }
+
+  return { success: true };
+}
+
+/**
+ * One-time migration script:
+ * Iterates through the 'Task Master' sheet and assigns a permanent string ID 
+ * (e.g., 'TASK-101') to Column A for any existing row missing an ID.
+ */
 function migrateHistoricalLogsToTaskId() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const masterSheet = ss.getSheetByName("Task Master");
-  const logSheet = ss.getSheetByName("Personal Task Status");
-  
-  // Build a Row-to-ID lookup map from Task Master
-  const masterData = masterSheet.getRange("A2:B" + masterSheet.getLastRow()).getValues();
-  const rowToIdMap = {};
-  masterData.forEach((row, idx) => {
-    const actualRow = idx + 2;
-    rowToIdMap[actualRow] = row[0]; // Row number -> Task ID
-  });
+  const sheet = getTaskMasterSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { success: true, updated: 0 };
 
-  // Update Log rows where Column 2 contains a numeric row reference
-  const logData = logSheet.getRange("B2:B" + logSheet.getLastRow()).getValues();
-  const updatedColumn = logData.map(cell => {
-    const val = cell[0];
-    // If cell contains a row number (numeric), map it to Task ID
-    if (typeof val === 'number' || !isNaN(val)) {
-      return [rowToIdMap[val] || "UNKNOWN_DELETED_TASK"];
+  const idsRange = sheet.getRange(2, 1, lastRow - 1, 1);
+  const idValues = idsRange.getValues();
+  let updatedCount = 0;
+
+  for (let i = 0; i < idValues.length; i++) {
+    const currentId = idValues[i][0] ? String(idValues[i][0]).trim() : "";
+    if (!currentId) {
+      const generatedId = "TASK-" + (100 + i + 1); // e.g. TASK-101, TASK-102
+      idValues[i][0] = generatedId;
+      updatedCount++;
     }
-    return [val]; // Already an ID
-  });
+  }
 
-  logSheet.getRange(2, 2, updatedColumn.length, 1).setValues(updatedColumn);
+  if (updatedCount > 0) {
+    idsRange.setValues(idValues);
+  }
+
+  Logger.log(`Migration complete. Assigned unique Task IDs to ${updatedCount} rows.`);
+  return { success: true, updated: updatedCount };
 }
 
 // ==========================================
@@ -597,7 +659,7 @@ function getPersonalStatusesForDate_(dateStr) {
     const dateValue = normalizeDateCell_(r[0]);
     if (dateValue !== dateStr) return;
 
-    const row = r[1];
+    const taskId = r[1];
     const userName = r[3] ? r[3].toString() : "";
     if (!userName) return;
     const status = r[4] ? r[4].toString() : "";
@@ -605,15 +667,15 @@ function getPersonalStatusesForDate_(dateStr) {
     const recordsCount = parseCount_(r[7]);
     const ts = r[6] instanceof Date ? r[6].getTime() : new Date(r[6]).getTime();
 
-    const key = row + "|" + userName;
+    const key = taskId + "|" + userName;
     if (!latest[key] || ts >= latest[key].ts) {
-      latest[key] = { row: row, userName: userName, status: status, note: note, recordsCount: recordsCount, ts: ts };
+      latest[key] = { taskId: taskId, userName: userName, status: status, note: note, recordsCount: recordsCount, ts: ts };
     }
   });
 
   return Object.keys(latest).map(k => {
     const entry = latest[k];
-    return { row: entry.row, userName: entry.userName, status: entry.status, note: entry.note, recordsCount: entry.recordsCount };
+    return { taskId: entry.taskId, userName: entry.userName, status: entry.status, note: entry.note, recordsCount: entry.recordsCount };
   });
 }
 
