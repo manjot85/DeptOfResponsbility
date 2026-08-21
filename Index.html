@@ -10,6 +10,8 @@
       .sort-arrow { display: inline-block; margin-left: 2px; opacity: 0.35; font-size: 9px; }
       .sort-arrow.active { opacity: 1; color: #4338ca; }
       tr.group-header-row td { background: #eef2ff; color: #4338ca; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; padding-top: 6px; padding-bottom: 6px; }
+      @keyframes rowFlash { 0% { background-color: #d1fae5; } 100% { background-color: transparent; } }
+      tr.row-flash { animation: rowFlash 1000ms ease-out; }
     </style>
   </head>
   <body class="bg-slate-50 text-slate-800 font-sans min-h-screen antialiased">
@@ -158,18 +160,21 @@
         <!-- SUB-TAB: WORKLOAD MANAGEMENT -->
         <div id="subtab-workload-view" class="hidden space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+            <button type="button" onclick="openWorkloadTotalTasksDrilldown()" class="text-left bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm hover:border-indigo-300 hover:shadow-md transition cursor-pointer">
               <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Total Department Tasks</p>
               <p id="workloadTotalTasks" class="text-2xl font-extrabold text-indigo-600 mt-0.5">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+              <p class="text-[9px] text-indigo-400 font-medium mt-1">Click for details →</p>
+            </button>
+            <button type="button" onclick="openWorkloadMembersDrilldown()" class="text-left bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm hover:border-amber-300 hover:shadow-md transition cursor-pointer">
               <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Team Average Task Load</p>
               <p id="workloadAvgTasks" class="text-2xl font-extrabold text-amber-500 mt-0.5">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+              <p class="text-[9px] text-amber-500 font-medium mt-1">Click for details →</p>
+            </button>
+            <button type="button" onclick="openWorkloadMembersDrilldown()" class="text-left bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm hover:border-emerald-300 hover:shadow-md transition cursor-pointer">
               <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Active Team Members</p>
               <p id="workloadTotalMembers" class="text-2xl font-extrabold text-emerald-600 mt-0.5">0</p>
-            </div>
+              <p class="text-[9px] text-emerald-500 font-medium mt-1">Click for details →</p>
+            </button>
           </div>
 
           <!-- TASKS BY DAY (WORKLOAD VIEW) -->
@@ -253,7 +258,7 @@
             <div class="flex justify-between items-center mb-3">
               <div>
                 <h3 class="text-xs font-bold text-slate-800">Daily Completion Status by Team Member</h3>
-                <p class="text-[10px] text-slate-400">Tasks logged as Completed in the Personal Task Status sheet, per person per day. Dash = nothing logged that period. Ranges over 14 days automatically group into weekly columns for readability — click any cell for the day-by-day breakdown.</p>
+                <p class="text-[10px] text-slate-400">Tasks logged as Completed in the Personal Task Status sheet, per person per day. Dash = nothing logged that period. Ranges over 14 days automatically group into weekly columns, and ranges over ~2 months group into monthly columns, for readability — click any cell for the breakdown.</p>
               </div>
               <span id="completionRangeBadge" class="text-[10px] bg-slate-100 text-slate-600 font-medium px-2 py-0.5 rounded-md">Loading range...</span>
             </div>
@@ -1122,6 +1127,7 @@
       }
 
       let personalStatusByRow = {};
+      let optimisticFlashTaskId = null; // task row to briefly highlight after an optimistic update
       let pendingShareToggleCheckbox = null;
       let pendingSingleToggleCheckbox = null;
       let markDoneModalRow = null;
@@ -1167,33 +1173,33 @@
           .getAllTasksMaster();
       }
 
-function buildPersonalStatusMap(statuses) {
-  const map = {};
-  (statuses || []).forEach(s => {
-    if (!map[s.taskId]) map[s.taskId] = {};
-    map[s.taskId][s.userName] = { status: s.status, note: s.note, recordsCount: s.recordsCount };
-  });
-  return map;
-}
+      function buildPersonalStatusMap(statuses) {
+        const map = {};
+        (statuses || []).forEach(s => {
+          if (!map[s.taskId]) map[s.taskId] = {};
+          map[s.taskId][s.userName] = { status: s.status, note: s.note, recordsCount: s.recordsCount };
+        });
+        return map;
+      }
 
-function getMyPersonalStatus(task, userName) {
-  if (!task || task.assignedTo.length <= 1) return null;
-  const statusMap = personalStatusById[task.id];
-  if (!statusMap) return null;
-  const entry = statusMap[userName];
-  return entry ? entry.status : null;
-}
+      function getMyPersonalStatus(task, userName) {
+        if (!task || task.assignedTo.length <= 1) return null;
+        const statusMap = personalStatusByRow[task.id];
+        if (!statusMap) return null;
+        const entry = statusMap[userName];
+        return entry ? entry.status : null;
+      }
 
-// Returns the count of records this user completed for a task today (0 if none).
-// Unlike getMyPersonalStatus this has no shared-task guard, because single-assignee
-// completions also write a personal status row carrying the record count.
-function getMyPersonalCount(task, userName) {
-  if (!task) return 0;
-  const statusMap = personalStatusById[task.id];
-  if (!statusMap) return 0;
-  const entry = statusMap[userName];
-  return entry && entry.recordsCount ? entry.recordsCount : 0;
-}
+      // Returns the count of records this user completed for a task today (0 if none).
+      // Unlike getMyPersonalStatus this has no shared-task guard, because single-assignee
+      // completions also write a personal status row carrying the record count.
+      function getMyPersonalCount(task, userName) {
+        if (!task) return 0;
+        const statusMap = personalStatusByRow[task.id];
+        if (!statusMap) return 0;
+        const entry = statusMap[userName];
+        return entry && entry.recordsCount ? entry.recordsCount : 0;
+      }
 
       function filterTasksByStatus(tasks, filterVal) {
         if (filterVal === 'active') {
@@ -1426,6 +1432,39 @@ function getMyPersonalCount(task, userName) {
         showTaskListModal(`${day} — Active Tasks Scheduled`, `Showing ${dayTasks.length} task(s) for ${day}`, dayTasks);
       }
 
+      // ==========================================
+      // WORKLOAD SUMMARY CARD DRILLDOWNS
+      // ==========================================
+
+      function openWorkloadTotalTasksDrilldown() {
+        const tasks = getTodayScheduledActiveTasks();
+        showTaskListModal(
+          'Total Department Tasks (Today)',
+          `${tasks.length} active task(s) scheduled for today's CST shift`,
+          tasks
+        );
+      }
+
+      function openWorkloadMembersDrilldown() {
+        const tasks = getTodayScheduledActiveTasks();
+        const rows = (memberList || []).map(m => ({
+          name: m.name,
+          title: m.title,
+          count: tasks.filter(t => t.assignedTo.includes(m.name)).length
+        }));
+
+        showTaskListModal(
+          'Team Workload Breakdown (Today)',
+          `${rows.length} active team member(s)`,
+          rows,
+          [
+            { label: 'MEMBER', render: r => `<span class="font-medium text-slate-800">${r.name}</span>` },
+            { label: 'TITLE', render: r => `<span class="text-slate-500">${r.title}</span>` },
+            { label: 'TODAY TASKS', align: 'right', render: r => `<span class="font-bold text-indigo-700">${r.count}</span>` }
+          ]
+        );
+      }
+
       function getDashboardLinkHtml(task) {
         const linkUrl = task.dashboardLink || task.dashboardUrl || '';
         const nameVal = task.dashboardName ? String(task.dashboardName).trim() : '';
@@ -1444,22 +1483,24 @@ function getMyPersonalCount(task, userName) {
 
         return `<span class="text-slate-700 font-medium max-w-[200px] truncate block" title="${displayName}">${displayName}</span>`;
       }
-function getAssigneesButtonHtml(task) {
-  const assigneesCount = task.assignedTo.length;
-  if (assigneesCount === 0) return '<span class="text-amber-700 text-[11px] font-medium bg-amber-50 border border-amber-200/60 px-1.5 py-0.5 rounded-md whitespace-nowrap" title="Not visible in anyone\'s My Tasks until assigned">⚠️ No Assignee</span>';
-  return `<button onclick="showAssigneesModal('${task.id}')" class="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 px-2 py-0.5 rounded-md transition whitespace-nowrap">👥 View Assignees (${assigneesCount})</button>`;
-}
 
-function getScheduleButtonHtml(task) {
-  if (!task.isRecurring) {
-    if (task.dueDate) {
-      return `<span class="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60" title="Due ${task.dueDate}">📅 Due ${task.dueDate}</span>`;
-    }
-    return '<span class="text-slate-400 font-medium text-[11px] italic">No Schedule</span>';
-  }
-  const daysCount = task.recurringDays.length;
-  return `<button onclick="showScheduleModal('${task.id}')" class="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 px-2 py-0.5 rounded-md transition whitespace-nowrap">📅 View Days (${daysCount})</button>`;
-}
+      function getAssigneesButtonHtml(task) {
+        const assigneesCount = task.assignedTo.length;
+        if (assigneesCount === 0) return '<span class="text-amber-700 text-[11px] font-medium bg-amber-50 border border-amber-200/60 px-1.5 py-0.5 rounded-md whitespace-nowrap" title="Not visible in anyone\'s My Tasks until assigned">⚠️ No Assignee</span>';
+        return `<button onclick="showAssigneesModal('${task.id}')" class="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 px-2 py-0.5 rounded-md transition whitespace-nowrap">👥 View Assignees (${assigneesCount})</button>`;
+      }
+
+      function getScheduleButtonHtml(task) {
+        if (!task.isRecurring) {
+          if (task.dueDate) {
+            return `<span class="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60" title="Due ${task.dueDate}">📅 Due ${task.dueDate}</span>`;
+          }
+          return '<span class="text-slate-400 font-medium text-[11px] italic">No Schedule</span>';
+        }
+        const daysCount = task.recurringDays.length;
+        return `<button onclick="showScheduleModal('${task.id}')" class="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 px-2 py-0.5 rounded-md transition whitespace-nowrap">📅 View Days (${daysCount})</button>`;
+      }
+
       function getStatusBadgeHtml(isActive) {
         if (isActive === false) {
           return `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-[9px] font-semibold bg-rose-50 text-rose-600 border border-rose-200/60">Paused / Inactive</span>`;
@@ -1479,33 +1520,35 @@ function getScheduleButtonHtml(task) {
         const isChecked = t.completed === true || myCompleted;
         const myCount = myCompleted ? getMyPersonalCount(t, selectedUser ? selectedUser.name : '') : 0;
 
-        // Single-assignee tasks keep the exact original checkbox behavior (one click
-        // completes it, full stop). Shared/multi-assignee tasks route through a
-        // confirmation step so completing your own copy doesn't silently clear it
-        // for everyone else on the team.
-const checkboxOnChange = isShared
-    ? `handleSharedToggle('${t.id}', this.checked, ${t.completed ? 'true' : 'false'}, this)`
-    : `handleToggle('${t.id}', this.checked, this)`;
+        // Single-assignee tasks route through a record-count modal too (so every
+        // completion is credited with a records count for reporting). Shared/
+        // multi-assignee tasks route through the "mark done" confirmation step so
+        // completing your own copy doesn't silently clear it for the whole team.
+        const checkboxOnChange = isShared
+          ? `handleSharedToggle('${t.id}', this.checked, ${t.completed ? 'true' : 'false'}, this)`
+          : `handleSingleToggle('${t.id}', this.checked, this)`;
 
-  let extraRow = '';
-  if (myCompleted && myCount > 0) {
-    extraRow += `<div class="mt-0.5 text-[9px] font-semibold text-emerald-600">${myCount} record${myCount === 1 ? '' : 's'} completed</div>`;
-  }
-  if (isShared && myCompleted && !t.completed) {
-    extraRow += `<div class="mt-0.5"><button onclick="promptMarkCompleteForAll('${t.id}')" class="text-[9px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline">🌐 Mark Complete for All (Team)</button></div>`;
-  } else if (isShared && myDeferred) {
-    const coveredBy = personalStatusById[t.id] && personalStatusById[t.id][selectedUser ? selectedUser.name : ''] ? personalStatusById[t.id][selectedUser.name].note : '';
-    extraRow += `<div class="mt-0.5 text-[9px] font-medium text-amber-600">⏩ Deferred for today${coveredBy ? ' · covered by ' + coveredBy : ''} - <button onclick="undeferTask('${t.id}')" class="hover:underline">Undo</button></div>`;
-  }
+        let extraRow = '';
+        if (myCompleted && myCount > 0) {
+          extraRow += `<div class="mt-0.5 text-[9px] font-semibold text-emerald-600">${myCount} record${myCount === 1 ? '' : 's'} completed</div>`;
+        }
+        if (isShared && myCompleted && !t.completed) {
+          extraRow += `<div class="mt-0.5"><button onclick="promptMarkCompleteForAll('${t.id}')" class="text-[9px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline">🌐 Mark Complete for All (Team)</button></div>`;
+        } else if (isShared && myDeferred) {
+          const coveredBy = personalStatusByRow[t.id] && personalStatusByRow[t.id][selectedUser ? selectedUser.name : ''] ? personalStatusByRow[t.id][selectedUser.name].note : '';
+          extraRow += `<div class="mt-0.5 text-[9px] font-medium text-amber-600">⏩ Deferred for today${coveredBy ? ' · covered by ' + coveredBy : ''} - <button onclick="undeferTask('${t.id}')" class="hover:underline">Undo</button></div>`;
+        }
 
-  const deferBtn = (isShared && !myCompleted && !myDeferred && !t.completed)
-    ? `<button onclick="openDeferModal('${t.id}')" title="Hand this off for today without completing it" class="text-slate-400 hover:text-amber-600 text-[10px] ml-1.5 align-middle">⏩</button>`
-    : '';
+        const deferBtn = (isShared && !myCompleted && !myDeferred && !t.completed)
+          ? `<button onclick="openDeferModal('${t.id}')" title="Hand this off for today without completing it" class="text-slate-400 hover:text-amber-600 text-[10px] ml-1.5 align-middle">⏩</button>`
+          : '';
 
         const sharedTag = isShared ? ' <span class="text-[8px] font-semibold text-indigo-400 align-middle" title="Shared task — completing your copy does not clear it for the rest of the team unless you mark it complete for all">👥 SHARED</span>' : '';
 
+        const flashClass = t.id === optimisticFlashTaskId ? ' row-flash' : '';
+
         return `
-          <tr class="hover:bg-slate-50/50 transition ${myDeferred ? 'opacity-50' : ''}">
+          <tr class="hover:bg-slate-50/50 transition ${myDeferred ? 'opacity-50' : ''}${flashClass}">
             <td class="py-2.5 px-2 text-center">
               <input type="checkbox" ${isChecked ? 'checked' : ''} 
                 onchange="${checkboxOnChange}"
@@ -1566,25 +1609,26 @@ const checkboxOnChange = isShared
           tbody.innerHTML = sortedTasks.map(t => renderMgmtTaskRow(t)).join('');
         }
       }
-function renderSetupTaskRow(t) {
-  return `
-    <tr class="hover:bg-slate-50/50 transition">
-      <td class="py-2.5 px-2 font-medium text-slate-800 max-w-[220px] truncate" title="${t.taskName}">${t.taskName}</td>
-      <td class="py-2.5 px-2"><span class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full text-[9px] font-medium border border-slate-200/50">${t.taskType || 'Report'}</span></td>
-      <td class="py-2.5 px-2">${getStatusBadgeHtml(t.isActive)}</td>
-      <td class="py-2.5 px-2">${getDashboardLinkHtml(t)}</td>
-      <td class="py-2.5 px-2">${getAssigneesButtonHtml(t)}</td>
-      <td class="py-2.5 px-2">${getScheduleButtonHtml(t)}</td>
-      <td class="py-2.5 px-2 text-right space-x-2">
-        <button onclick="toggleTaskActiveState('${t.id}', ${!t.isActive})" class="text-amber-600 hover:text-amber-800 font-medium text-[11px]">
-          ${t.isActive ? 'Pause' : 'Activate'}
-        </button>
-        <button onclick="openTaskModal('${t.id}')" class="text-indigo-600 hover:text-indigo-800 font-medium text-[11px]">Edit</button>
-        <button onclick="deleteTask('${t.id}')" class="text-rose-500 hover:text-rose-700 font-medium text-[11px]">Remove</button>
-      </td>
-    </tr>
-  `;
-}
+
+      function renderSetupTaskRow(t) {
+        return `
+          <tr class="hover:bg-slate-50/50 transition">
+            <td class="py-2.5 px-2 font-medium text-slate-800 max-w-[220px] truncate" title="${t.taskName}">${t.taskName}</td>
+            <td class="py-2.5 px-2"><span class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full text-[9px] font-medium border border-slate-200/50">${t.taskType || 'Report'}</span></td>
+            <td class="py-2.5 px-2">${getStatusBadgeHtml(t.isActive)}</td>
+            <td class="py-2.5 px-2">${getDashboardLinkHtml(t)}</td>
+            <td class="py-2.5 px-2">${getAssigneesButtonHtml(t)}</td>
+            <td class="py-2.5 px-2">${getScheduleButtonHtml(t)}</td>
+            <td class="py-2.5 px-2 text-right space-x-2">
+              <button onclick="toggleTaskActiveState('${t.id}', ${!t.isActive})" class="text-amber-600 hover:text-amber-800 font-medium text-[11px]">
+                ${t.isActive ? 'Pause' : 'Activate'}
+              </button>
+              <button onclick="openTaskModal('${t.id}')" class="text-indigo-600 hover:text-indigo-800 font-medium text-[11px]">Edit</button>
+              <button onclick="deleteTask('${t.id}')" class="text-rose-500 hover:text-rose-700 font-medium text-[11px]">Remove</button>
+            </td>
+          </tr>
+        `;
+      }
 
       function renderTaskSetupTable(tasks) {
         const tbody = document.getElementById('taskSetupTable');
@@ -1639,7 +1683,7 @@ function renderSetupTaskRow(t) {
         return masterTaskList.find(t =>
           t.isActive &&
           normalizeTaskNameClient(t.taskName) === normalized &&
-          String(t.id) !== String(excludeId)
+          String(t.id) !== String(excludeRow)
         ) || null;
       }
 
@@ -1674,46 +1718,46 @@ function renderSetupTaskRow(t) {
         mergeBtn.classList.remove('hidden');
         subtitle.textContent = `Found ${duplicateGroupsCache.length} duplicate group(s). Pick which entry to keep in each group — the rest will be merged in and removed.`;
 
-body.innerHTML = duplicateGroupsCache.map((group, gIdx) => `
-  <div class="border border-slate-200 rounded-xl p-3 space-y-2">
-    <div class="text-xs font-bold text-slate-800">${group[0].taskName} <span class="text-slate-400 font-medium">(${group.length} copies)</span></div>
-    <div class="space-y-1.5">
-      ${group.map((t, tIdx) => `
-        <label class="flex items-center justify-between gap-2 p-2 bg-slate-50 rounded-lg border border-slate-100 cursor-pointer hover:bg-slate-100/70 transition">
-          <div class="flex items-center gap-2 min-w-0">
-            <input type="radio" name="dupKeep_${gIdx}" value="${t.id}" ${tIdx === 0 ? 'checked' : ''} class="dup-keep-radio flex-shrink-0">
-            <div class="min-w-0">
-              <div class="text-[11px] font-semibold text-slate-800">Task ID ${t.id} ${tIdx === 0 ? '<span class="text-emerald-600">(newest)</span>' : ''}</div>
-              <div class="text-[10px] text-slate-500 truncate">Dashboard: ${t.dashboardName || '-'} · Assigned: ${t.assignedTo.length === 0 ? 'No Assignee' : t.assignedTo.join(', ')}</div>
-              ${t.assignedTo.length === 0 ? '<div class="text-[9px] text-amber-600 font-medium mt-0.5">⚠️ Won\'t appear in anyone\'s My Tasks until assigned</div>' : ''}
+        body.innerHTML = duplicateGroupsCache.map((group, gIdx) => `
+          <div class="border border-slate-200 rounded-xl p-3 space-y-2">
+            <div class="text-xs font-bold text-slate-800">${group[0].taskName} <span class="text-slate-400 font-medium">(${group.length} copies)</span></div>
+            <div class="space-y-1.5">
+              ${group.map((t, tIdx) => `
+                <label class="flex items-center justify-between gap-2 p-2 bg-slate-50 rounded-lg border border-slate-100 cursor-pointer hover:bg-slate-100/70 transition">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <input type="radio" name="dupKeep_${gIdx}" value="${t.id}" ${tIdx === 0 ? 'checked' : ''} class="dup-keep-radio flex-shrink-0">
+                    <div class="min-w-0">
+                      <div class="text-[11px] font-semibold text-slate-800">Task ID ${t.id} ${tIdx === 0 ? '<span class="text-emerald-600">(newest)</span>' : ''}</div>
+                      <div class="text-[10px] text-slate-500 truncate">Dashboard: ${t.dashboardName || '-'} · Assigned: ${t.assignedTo.length === 0 ? 'No Assignee' : t.assignedTo.join(', ')}</div>
+                      ${t.assignedTo.length === 0 ? '<div class="text-[9px] text-amber-600 font-medium mt-0.5">⚠️ Won\'t appear in anyone\'s My Tasks until assigned</div>' : ''}
+                    </div>
+                  </div>
+                  <div class="text-[9px] text-slate-400 flex-shrink-0 text-right">${t.lastUpdated ? `Updated ${t.lastUpdated}<br>by ${t.updatedBy || 'System'}` : ''}</div>
+                </label>
+              `).join('')}
             </div>
           </div>
-          <div class="text-[9px] text-slate-400 flex-shrink-0 text-right">${t.lastUpdated ? `Updated ${t.lastUpdated}<br>by ${t.updatedBy || 'System'}` : ''}</div>
-        </label>
-      `).join('')}
-    </div>
-  </div>
-`).join('');
+        `).join('');
       }
 
       function closeDuplicatesModal() {
         document.getElementById('duplicatesModal').classList.add('hidden');
       }
 
-   function mergeSelectedDuplicates() {
-  if (duplicateGroupsCache.length === 0) return;
+      function mergeSelectedDuplicates() {
+        if (duplicateGroupsCache.length === 0) return;
 
-  const mergeGroups = duplicateGroupsCache.map((group, gIdx) => {
-    const selected = document.querySelector(`input[name="dupKeep_${gIdx}"]:checked`);
-    const keepId = selected ? selected.value : group[0].id;
-    const duplicateIds = group.map(t => t.id).filter(id => String(id) !== String(keepId));
-    return { keepId: keepId, duplicateIds: duplicateIds };
-  });
+        const mergeGroups = duplicateGroupsCache.map((group, gIdx) => {
+          const selected = document.querySelector(`input[name="dupKeep_${gIdx}"]:checked`);
+          const keepId = selected ? selected.value : group[0].id;
+          const duplicateIds = group.map(t => t.id).filter(id => String(id) !== String(keepId));
+          return { keepId: keepId, duplicateIds: duplicateIds };
+        });
 
-  const totalDuplicates = mergeGroups.reduce((sum, g) => sum + g.duplicateIds.length, 0);
-  if (!confirm(`This will merge ${mergeGroups.length} group(s) and permanently remove ${totalDuplicates} duplicate task(s) from the Task Master sheet. Continue?`)) {
-    return;
-  }
+        const totalDuplicates = mergeGroups.reduce((sum, g) => sum + g.duplicateIds.length, 0);
+        if (!confirm(`This will merge ${mergeGroups.length} group(s) and permanently remove ${totalDuplicates} duplicate task(s) from the Task Master sheet. Continue?`)) {
+          return;
+        }
         const mergeBtn = document.getElementById('btnMergeDuplicates');
         mergeBtn.disabled = true;
         mergeBtn.textContent = 'Merging...';
@@ -1736,59 +1780,61 @@ body.innerHTML = duplicateGroupsCache.map((group, gIdx) => `
       function toggleTaskActiveState(row, setStatus) {
         google.script.run
           .withSuccessHandler(() => loadTasks())
+          .withFailureHandler(err => alert('Error updating task status: ' + err))
           .setTaskActiveStatus(row, setStatus, selectedUser ? selectedUser.name : 'System');
       }
 
-function showAssigneesModal(taskId) {
-  const task = masterTaskList.find(t => t.id === taskId);
-  if (!task) return;
+      function showAssigneesModal(taskId) {
+        const task = masterTaskList.find(t => t.id === taskId);
+        if (!task) return;
 
-  document.getElementById('assigneesModalTitle').innerText = task.taskName;
-  const listEl = document.getElementById('assigneesModalList');
+        document.getElementById('assigneesModalTitle').innerText = task.taskName;
+        const listEl = document.getElementById('assigneesModalList');
 
-  if (task.assignedTo.length === 0) {
-    listEl.innerHTML = '<div class="text-[11px] text-amber-600 py-1.5">⚠️ No assignee set - this task won\'t appear in anyone\'s My Tasks list until someone is assigned.</div>';
-  } else {
-    listEl.innerHTML = task.assignedTo.map(name => `
-      <div class="flex items-center justify-between p-1.5 bg-slate-50 rounded-lg text-[11px] font-medium text-slate-700 border border-slate-100">
-        <span>👤 ${name}</span>
-      </div>
-    `).join('');
-  }
+        if (task.assignedTo.length === 0) {
+          listEl.innerHTML = '<div class="text-[11px] text-amber-600 py-1.5">⚠️ No assignee set - this task won\'t appear in anyone\'s My Tasks list until someone is assigned.</div>';
+        } else {
+          listEl.innerHTML = task.assignedTo.map(name => `
+            <div class="flex items-center justify-between p-1.5 bg-slate-50 rounded-lg text-[11px] font-medium text-slate-700 border border-slate-100">
+              <span>👤 ${name}</span>
+            </div>
+          `).join('');
+        }
 
-  document.getElementById('assigneesModal').classList.remove('hidden');
-}
+        document.getElementById('assigneesModal').classList.remove('hidden');
+      }
 
-function closeAssigneesModal() {
-  document.getElementById('assigneesModal').classList.add('hidden');
-}
+      function closeAssigneesModal() {
+        document.getElementById('assigneesModal').classList.add('hidden');
+      }
 
-function showScheduleModal(taskId) {
-  const task = masterTaskList.find(t => t.id === taskId);
-  if (!task) return;
+      function showScheduleModal(taskId) {
+        const task = masterTaskList.find(t => t.id === taskId);
+        if (!task) return;
 
-  document.getElementById('scheduleModalTitle').innerText = task.taskName;
-  const listEl = document.getElementById('scheduleModalList');
+        document.getElementById('scheduleModalTitle').innerText = task.taskName;
+        const listEl = document.getElementById('scheduleModalList');
 
-  if (!task.isRecurring || task.recurringDays.length === 0) {
-    listEl.innerHTML = '<div class="text-[11px] text-slate-400 py-1.5">Marked recurring, but no specific days have been selected yet.</div>';
-  } else {
-    listEl.innerHTML = task.recurringDays.map(day => `
-      <div class="flex items-center justify-between p-1.5 bg-indigo-50/50 rounded-lg text-[11px] font-medium text-indigo-700 border border-indigo-100">
-        <span>📅 ${day}</span>
-      </div>
-    `).join('');
-  }
+        if (!task.isRecurring || task.recurringDays.length === 0) {
+          listEl.innerHTML = '<div class="text-[11px] text-slate-400 py-1.5">Marked recurring, but no specific days have been selected yet.</div>';
+        } else {
+          listEl.innerHTML = task.recurringDays.map(day => `
+            <div class="flex items-center justify-between p-1.5 bg-indigo-50/50 rounded-lg text-[11px] font-medium text-indigo-700 border border-indigo-100">
+              <span>📅 ${day}</span>
+            </div>
+          `).join('');
+        }
 
-  document.getElementById('scheduleModal').classList.remove('hidden');
-}
+        document.getElementById('scheduleModal').classList.remove('hidden');
+      }
 
       function closeScheduleModal() {
         document.getElementById('scheduleModal').classList.add('hidden');
       }
-function openTaskModal(taskId = null) {
-  document.getElementById('taskId').value = taskId || '';
-  const task = taskId ? masterTaskList.find(t => t.id === taskId) : null;
+
+      function openTaskModal(taskId = null) {
+        document.getElementById('taskRow').value = taskId || '';
+        const task = taskId ? masterTaskList.find(t => t.id === taskId) : null;
 
         document.getElementById('taskModalTitle').innerText = task ? 'Edit Task' : 'Add New Task';
         document.getElementById('taskNameDuplicateWarning').classList.add('hidden');
@@ -1882,11 +1928,12 @@ function openTaskModal(taskId = null) {
           alert('Please enter a task name.');
           return;
         }
-const duplicateMatch = findDuplicateTaskByName(taskName, taskId);
-  if (duplicateMatch) {
-    const proceed = confirm(`A task named "${duplicateMatch.taskName}" already exists (ID ${duplicateMatch.id}).\n\nSave this as a separate duplicate task anyway?\n\nTip: use "Find & Clean Duplicates" in Task Setup afterwards to merge them.`);
-    if (!proceed) return;
-  }
+
+        const duplicateMatch = findDuplicateTaskByName(taskName, row);
+        if (duplicateMatch) {
+          const proceed = confirm(`A task named "${duplicateMatch.taskName}" already exists (ID ${duplicateMatch.id}).\n\nSave this as a separate duplicate task anyway?\n\nTip: use "Find & Clean Duplicates" in Task Setup afterwards to merge them.`);
+          if (!proceed) return;
+        }
 
         const assignedTo = Array.from(document.querySelectorAll('.task-assignee-cb:checked')).map(cb => cb.value);
         const isRecurring = document.getElementById('taskIsRecurring').checked;
@@ -1898,6 +1945,7 @@ const duplicateMatch = findDuplicateTaskByName(taskName, taskId);
             closeTaskModal();
             loadTasks();
           })
+          .withFailureHandler(err => alert('Error saving task: ' + err))
           .saveTaskMaster({
             row: row,
             taskName: taskName,
@@ -1917,22 +1965,101 @@ const duplicateMatch = findDuplicateTaskByName(taskName, taskId);
         if (confirm('Are you sure you want to deactivate/pause this task?')) {
           google.script.run
             .withSuccessHandler(() => loadTasks())
+            .withFailureHandler(err => alert('Error removing task: ' + err))
             .deleteTaskMaster(row);
         }
       }
-function handleToggle(task) {
-  google.script.run.toggleTaskStatus(task.id, 'Completed', '');
-}
 
-function openSingleCompleteModal(taskId) {
-  const task = masterTaskList.find(t => t.id === taskId);
-  if (!task) return;
-  singleCompleteModalTaskId = taskId;
-  document.getElementById('singleCompleteModalTaskName').innerText = task.taskName;
-  document.getElementById('singleCompleteCountInput').value = '';
-  document.getElementById('singleCompleteCounterError').classList.add('hidden');
-  document.getElementById('singleCompleteModal').classList.remove('hidden');
-}
+      // ==========================================
+      // OPTIMISTIC UI — instant feedback for completion actions
+      // ==========================================
+      // Every completion/undo/defer action below updates the local cache and
+      // re-renders immediately (no waiting on the network), then fires the real
+      // server call in the background. If the server call fails, the local
+      // change is rolled back and the person sees an alert — so the checkbox
+      // never lies about whether the click "took". This also makes the whole
+      // flow resilient to a slow connection: the person doesn't have to wonder
+      // whether their tap registered.
+
+      // Optimistically patches this user's personal-status entry for a task
+      // (used by personal completion, undo, and defer). Returns a rollback
+      // function that restores the previous entry.
+      function withOptimisticPersonalStatus(taskId, patch, run) {
+        if (!selectedUser) return;
+        if (!personalStatusByRow[taskId]) personalStatusByRow[taskId] = {};
+        const prevEntry = personalStatusByRow[taskId][selectedUser.name];
+
+        personalStatusByRow[taskId][selectedUser.name] = patch;
+        optimisticFlashTaskId = taskId;
+        renderAllTaskViews(masterTaskList);
+        setTimeout(() => { optimisticFlashTaskId = null; }, 1200);
+
+        const rollback = () => {
+          if (prevEntry) {
+            personalStatusByRow[taskId][selectedUser.name] = prevEntry;
+          } else {
+            delete personalStatusByRow[taskId][selectedUser.name];
+          }
+          renderAllTaskViews(masterTaskList);
+        };
+
+        run(rollback);
+      }
+
+      // Optimistically patches a task's shared `completed` flag (used by
+      // single-assignee completion and "Mark Complete for All"). Returns a
+      // rollback function that restores the previous value.
+      function withOptimisticTaskCompletion(taskId, isCompleted, run) {
+        const task = masterTaskList.find(t => t.id === taskId);
+        const prevCompleted = task ? task.completed : undefined;
+
+        if (task) task.completed = isCompleted;
+        optimisticFlashTaskId = taskId;
+        renderAllTaskViews(masterTaskList);
+        setTimeout(() => { optimisticFlashTaskId = null; }, 1200);
+
+        const rollback = () => {
+          if (task) task.completed = prevCompleted;
+          renderAllTaskViews(masterTaskList);
+        };
+
+        run(rollback);
+      }
+
+      // ==========================================
+      // SINGLE-ASSIGNEE TASK COMPLETION (record count entry)
+      // ==========================================
+
+      function handleToggle(taskId, isCompleted, count) {
+        withOptimisticTaskCompletion(taskId, isCompleted, rollback => {
+          google.script.run
+            .withSuccessHandler(() => loadTasks())
+            .withFailureHandler(err => { rollback(); alert('Error updating task: ' + err); loadTasks(); })
+            .toggleTaskStatus(taskId, isCompleted, count || 0,
+              selectedUser ? selectedUser.name : 'System',
+              selectedUser ? selectedUser.title : '');
+        });
+      }
+
+      // Fires when the checkbox on a single-assignee task changes.
+      function handleSingleToggle(taskId, isChecked, checkboxEl) {
+        if (!isChecked) {
+          handleToggle(taskId, false);
+          return;
+        }
+        pendingSingleToggleCheckbox = checkboxEl;
+        openSingleCompleteModal(taskId);
+      }
+
+      function openSingleCompleteModal(taskId) {
+        const task = masterTaskList.find(t => t.id === taskId);
+        if (!task) return;
+        singleCompleteModalRow = taskId;
+        document.getElementById('singleCompleteModalTaskName').innerText = task.taskName;
+        document.getElementById('singleCompleteCountInput').value = '';
+        document.getElementById('singleCompleteCountError').classList.add('hidden');
+        document.getElementById('singleCompleteModal').classList.remove('hidden');
+      }
 
       function closeSingleCompleteModal() {
         document.getElementById('singleCompleteModal').classList.add('hidden');
@@ -1944,8 +2071,8 @@ function openSingleCompleteModal(taskId) {
       }
 
       function confirmSingleTaskComplete() {
-        const row = singleCompleteModalRow;
-        if (!row) { closeSingleCompleteModal(); return; }
+        const taskId = singleCompleteModalRow;
+        if (!taskId) { closeSingleCompleteModal(); return; }
         const countInput = document.getElementById('singleCompleteCountInput');
         const count = parseInt(countInput.value, 10);
         if (!countInput.value.trim() || isNaN(count) || count < 1) {
@@ -1953,8 +2080,9 @@ function openSingleCompleteModal(taskId) {
           return;
         }
         pendingSingleToggleCheckbox = null;
-        closeSingleCompleteModal();
-        handleToggle(row, true, count);
+        document.getElementById('singleCompleteModal').classList.add('hidden');
+        singleCompleteModalRow = null;
+        handleToggle(taskId, true, count);
       }
 
       // ==========================================
@@ -1962,15 +2090,15 @@ function openSingleCompleteModal(taskId) {
       // ==========================================
 
       // Fires when the checkbox on a shared/multi-assignee task changes.
-      function handleSharedToggle(row, isChecked, wasGloballyCompleted, checkboxEl) {
+      function handleSharedToggle(taskId, isChecked, wasGloballyCompleted, checkboxEl) {
         if (!isChecked) {
           // Unchecking: revert whichever completion state is currently in effect.
           // If it was completed for the whole team, undo that (same as the classic
           // single-assignee flow). Otherwise it was just your personal copy — revert only that.
           if (wasGloballyCompleted) {
-            handleToggle(row, false);
+            handleToggle(taskId, false);
           } else {
-            setPersonalCompletion(row, false);
+            setPersonalCompletion(taskId, false);
           }
           return;
         }
@@ -1978,28 +2106,35 @@ function openSingleCompleteModal(taskId) {
         // Checking a shared task always needs the confirmation step so a personal
         // "done" doesn't silently clear it from teammates' queues by accident.
         pendingShareToggleCheckbox = checkboxEl;
-        openMarkDoneModal(row);
+        openMarkDoneModal(taskId);
       }
 
-      function setPersonalCompletion(row, isCompleted, recordsCount) {
+      function setPersonalCompletion(taskId, isCompleted, recordsCount) {
         if (!selectedUser) return;
-        google.script.run
-          .withSuccessHandler(() => loadTasks())
-          .withFailureHandler(err => { alert('Error updating task: ' + err); loadTasks(); })
-          .setPersonalTaskStatus(row, selectedUser.name, selectedUser.title, isCompleted ? 'Completed' : 'Pending', '', isCompleted ? recordsCount : '');
+        const patch = {
+          status: isCompleted ? 'Completed' : 'Pending',
+          note: '',
+          recordsCount: isCompleted ? (recordsCount || 0) : 0
+        };
+        withOptimisticPersonalStatus(taskId, patch, rollback => {
+          google.script.run
+            .withSuccessHandler(() => loadTasks())
+            .withFailureHandler(err => { rollback(); alert('Error updating task: ' + err); loadTasks(); })
+            .setPersonalTaskStatus(taskId, selectedUser.name, selectedUser.title, isCompleted ? 'Completed' : 'Pending', '', isCompleted ? recordsCount : '');
+        });
       }
 
-function openMarkDoneModal(taskId, forceForAll) {
-  const task = masterTaskList.find(t => t.id === taskId);
-  if (!task) return;
-  markDoneModalTaskId = taskId;
-  document.getElementById('markDoneModalTaskName').innerText = task.taskName;
-  document.getElementById('markDoneModalAssignees').innerText = task.assignedTo.join(', ');
-  document.getElementById('markDoneForAllCheckbox').checked = !forceForAll;
-  document.getElementById('markDoneCountInput').value = '';
-  document.getElementById('markDoneCounterError').classList.add('hidden');
-  document.getElementById('markDoneModal').classList.remove('hidden');
-}
+      function openMarkDoneModal(taskId, forceForAll) {
+        const task = masterTaskList.find(t => t.id === taskId);
+        if (!task) return;
+        markDoneModalRow = taskId;
+        document.getElementById('markDoneModalTaskName').innerText = task.taskName;
+        document.getElementById('markDoneModalAssignees').innerText = task.assignedTo.join(', ');
+        document.getElementById('markDoneForAllCheckbox').checked = !!forceForAll;
+        document.getElementById('markDoneCountInput').value = '';
+        document.getElementById('markDoneCountError').classList.add('hidden');
+        document.getElementById('markDoneModal').classList.remove('hidden');
+      }
 
       function closeMarkDoneModal(reverted) {
         document.getElementById('markDoneModal').classList.add('hidden');
@@ -2011,8 +2146,8 @@ function openMarkDoneModal(taskId, forceForAll) {
       }
 
       function confirmMarkDone() {
-        const row = markDoneModalRow;
-        if (!row) { closeMarkDoneModal(false); return; }
+        const taskId = markDoneModalRow;
+        if (!taskId) { closeMarkDoneModal(false); return; }
         const countInput = document.getElementById('markDoneCountInput');
         const count = parseInt(countInput.value, 10);
         if (!countInput.value.trim() || isNaN(count) || count < 1) {
@@ -2025,34 +2160,34 @@ function openMarkDoneModal(taskId, forceForAll) {
         markDoneModalRow = null;
 
         if (forAll) {
-          handleToggle(row, true, count);
+          handleToggle(taskId, true, count);
         } else {
-          setPersonalCompletion(row, true, count);
+          setPersonalCompletion(taskId, true, count);
         }
       }
 
       // Retroactive "Mark Complete for All" — for when someone already completed
       // their own personal copy but forgot to clear it for the rest of the team.
-      function promptMarkCompleteForAll(row) {
-        openMarkDoneModal(row, true);
+      function promptMarkCompleteForAll(taskId) {
+        openMarkDoneModal(taskId, true);
       }
 
       // ==========================================
       // HAND OFF / DEFER A SHARED TASK FOR TODAY ONLY
       // ==========================================
 
-function openDeferModal(taskId) {
-  const task = masterTaskList.find(t => t.id === taskId);
-  if (!task) return;
-  deferModalTaskId = taskId;
-  document.getElementById('deferModalTaskName').innerText = task.taskName;
+      function openDeferModal(taskId) {
+        const task = masterTaskList.find(t => t.id === taskId);
+        if (!task) return;
+        deferModalRow = taskId;
+        document.getElementById('deferModalTaskName').innerText = task.taskName;
 
-  const others = task.assignedTo.filter(n => n !== (selectedUser ? selectedUser.name : ''));
-  const select = document.getElementById('deferModalCoveredBy');
-  select.innerHTML = '<option value="">Not specified</option>' + others.map(n => `<option value="${n}">${n}</option>`).join('');
+        const others = task.assignedTo.filter(n => n !== (selectedUser ? selectedUser.name : ''));
+        const select = document.getElementById('deferModalCoveredBy');
+        select.innerHTML = '<option value="">Not specified</option>' + others.map(n => `<option value="${n}">${n}</option>`).join('');
 
-  document.getElementById('deferModal').classList.remove('hidden');
-}
+        document.getElementById('deferModal').classList.remove('hidden');
+      }
 
       function closeDeferModal() {
         document.getElementById('deferModal').classList.add('hidden');
@@ -2060,19 +2195,23 @@ function openDeferModal(taskId) {
       }
 
       function confirmDefer() {
-        const row = deferModalRow;
-        if (!row || !selectedUser) { closeDeferModal(); return; }
+        const taskId = deferModalRow;
+        if (!taskId || !selectedUser) { closeDeferModal(); return; }
         const coveredBy = document.getElementById('deferModalCoveredBy').value;
-        closeDeferModal();
+        document.getElementById('deferModal').classList.add('hidden');
+        deferModalRow = null;
 
-        google.script.run
-          .withSuccessHandler(() => loadTasks())
-          .withFailureHandler(err => { alert('Error deferring task: ' + err); loadTasks(); })
-          .setPersonalTaskStatus(row, selectedUser.name, selectedUser.title, 'Deferred', coveredBy);
+        const patch = { status: 'Deferred', note: coveredBy, recordsCount: 0 };
+        withOptimisticPersonalStatus(taskId, patch, rollback => {
+          google.script.run
+            .withSuccessHandler(() => loadTasks())
+            .withFailureHandler(err => { rollback(); alert('Error deferring task: ' + err); loadTasks(); })
+            .setPersonalTaskStatus(taskId, selectedUser.name, selectedUser.title, 'Deferred', coveredBy);
+        });
       }
 
-      function undeferTask(row) {
-        setPersonalCompletion(row, false);
+      function undeferTask(taskId) {
+        setPersonalCompletion(taskId, false);
       }
 
       // Workload Management must agree with what "My Tasks" actually shows a
@@ -2202,9 +2341,12 @@ function openDeferModal(taskId) {
       // ==========================================
       // A month-long range would otherwise need ~30 date columns, which never
       // fits the table width. Past WEEKLY_VIEW_THRESHOLD days, the matrix groups
-      // days into Mon–Sun week buckets instead — a handful of columns that still
-      // scroll cleanly, with the daily breakdown one click away.
+      // days into Mon–Sun week buckets instead. Past MONTHLY_VIEW_THRESHOLD days
+      // (roughly 2+ months), it zooms out further into calendar-month buckets so
+      // multi-month ranges still fit without dozens of columns. Either way the
+      // daily breakdown is one click away.
       const WEEKLY_VIEW_THRESHOLD = 14;
+      const MONTHLY_VIEW_THRESHOLD = 60;
 
       function getMondayOfDateStr(dateStr) {
         const parts = String(dateStr).split('-').map(Number);
@@ -2242,11 +2384,29 @@ function openDeferModal(taskId) {
         });
       }
 
-      // Sums a member's completed/records/tasks across every day in a week bucket.
-      function getWeekCellData(memberName, week) {
+      // Groups an ordered, contiguous list of yyyy-MM-dd day strings into
+      // calendar-month buckets (yyyy-MM), preserving first-appearance order.
+      function computeMonthBuckets(days) {
+        const bucketDays = {};
+        const order = [];
+        const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        (days || []).forEach(ds => {
+          const key = ds.slice(0, 7); // yyyy-MM
+          if (!bucketDays[key]) { bucketDays[key] = []; order.push(key); }
+          bucketDays[key].push(ds);
+        });
+        return order.map(key => {
+          const [y, m] = key.split('-').map(Number);
+          return { key: key, days: bucketDays[key], label: `${MONTH_NAMES[m - 1]} ${y}` };
+        });
+      }
+
+      // Sums a member's completed/records/tasks across every day in a bucket
+      // (works for both week and month buckets — both have a `.days` array).
+      function getBucketCellData(memberName, bucket) {
         let completed = 0, records = 0;
         const tasks = [];
-        week.days.forEach(ds => {
+        bucket.days.forEach(ds => {
           const cell = completionReport.data[ds] && completionReport.data[ds][memberName];
           if (!cell) return;
           completed += cell.completed;
@@ -2256,15 +2416,31 @@ function openDeferModal(taskId) {
         return { completed, records, tasks };
       }
 
+      // Backward-compatible alias used by week-bucket drilldowns.
+      function getWeekCellData(memberName, week) {
+        return getBucketCellData(memberName, week);
+      }
+
       function openCompletionWeekDrilldown(memberName, weekKey) {
         if (!completionReport) return;
         const week = computeWeekBuckets(completionReport.days).find(w => w.key === weekKey);
         if (!week) return;
-        const cellData = getWeekCellData(memberName, week);
+        renderBucketDrilldown(memberName, week, `Week of ${week.label}`);
+      }
+
+      function openCompletionMonthDrilldown(memberName, monthKey) {
+        if (!completionReport) return;
+        const month = computeMonthBuckets(completionReport.days).find(m => m.key === monthKey);
+        if (!month) return;
+        renderBucketDrilldown(memberName, month, month.label);
+      }
+
+      function renderBucketDrilldown(memberName, bucket, labelSuffix) {
+        const cellData = getBucketCellData(memberName, bucket);
         const rows = cellData.tasks.slice().sort((a, b) => a.date.localeCompare(b.date));
 
         showTaskListModal(
-          `${memberName} — Week of ${week.label}`,
+          `${memberName} — ${labelSuffix}`,
           `${cellData.completed} task(s) completed · ${cellData.records} total records`,
           rows,
           [
@@ -2373,7 +2549,7 @@ function openDeferModal(taskId) {
         }
 
         // Grand totals are always computed from the raw per-day data, regardless
-        // of whether the table below groups those days by week for display.
+        // of whether the table below groups those days by week/month for display.
         let grandCompleted = 0;
         let grandRecords = 0;
         rows.forEach(m => {
@@ -2387,39 +2563,43 @@ function openDeferModal(taskId) {
         document.getElementById('completionStatCompleted').innerText = grandCompleted;
         document.getElementById('completionStatRecords').innerText = grandRecords;
 
-        const useWeekly = days.length > WEEKLY_VIEW_THRESHOLD;
+        const useMonthly = days.length > MONTHLY_VIEW_THRESHOLD;
+        const useWeekly = !useMonthly && days.length > WEEKLY_VIEW_THRESHOLD;
 
         if (rangeBadge) {
           const rangeText = `${selectedCompletionFrom} → ${selectedCompletionTo}${selectedCompletionTo === todayStr ? ' (through today)' : ''}`;
-          rangeBadge.innerText = useWeekly ? `${rangeText} · grouped by week` : rangeText;
+          const groupingNote = useMonthly ? ' · grouped by month' : (useWeekly ? ' · grouped by week' : '');
+          rangeBadge.innerText = rangeText + groupingNote;
         }
 
         const stickyFirstCol = 'sticky left-0 bg-white';
 
-        if (useWeekly) {
-          const weeks = computeWeekBuckets(days);
-          const weekTotals = {};
+        if (useMonthly || useWeekly) {
+          const buckets = useMonthly ? computeMonthBuckets(days) : computeWeekBuckets(days);
+          const bucketTotals = {};
+          const colHeaderLabel = useMonthly ? 'Month' : 'Week of';
+          const drilldownFn = useMonthly ? 'openCompletionMonthDrilldown' : 'openCompletionWeekDrilldown';
 
           thead.innerHTML = `
             <tr class="border-b border-slate-100 text-slate-400 text-[10px] uppercase tracking-wider">
               <th class="pb-2.5 font-semibold ${stickyFirstCol} pr-3">Team Member</th>
-              ${weeks.map(w => `<th class="pb-2.5 font-semibold text-center" title="${w.days.length} day(s) in this range">Week of<span class="block text-[9px] normal-case font-medium text-slate-400">${w.label}</span></th>`).join('')}
+              ${buckets.map(b => `<th class="pb-2.5 font-semibold text-center" title="${b.days.length} day(s) in this range">${colHeaderLabel}<span class="block text-[9px] normal-case font-medium text-slate-400">${b.label}</span></th>`).join('')}
               <th class="pb-2.5 font-semibold text-center">Range Total</th>
             </tr>`;
 
           const bodyRows = rows.map(m => {
             let rowCompleted = 0, rowRecords = 0;
-            const cells = weeks.map(w => {
-              const cellData = getWeekCellData(m.name, w);
+            const cells = buckets.map(b => {
+              const cellData = getBucketCellData(m.name, b);
               if (cellData.completed === 0) {
                 return '<td class="py-2 px-1.5 text-center text-slate-200">—</td>';
               }
-              weekTotals[w.key] = (weekTotals[w.key] || 0) + cellData.completed;
+              bucketTotals[b.key] = (bucketTotals[b.key] || 0) + cellData.completed;
               rowCompleted += cellData.completed;
               rowRecords += cellData.records;
-              const cellLabel = `${m.name} · week of ${w.label} · ${cellData.completed} task(s) completed · ${cellData.records} records · click for details`;
+              const cellLabel = `${m.name} · ${b.label} · ${cellData.completed} task(s) completed · ${cellData.records} records · click for details`;
               return `<td class="py-2 px-1.5 text-center">
-                <button onclick="openCompletionWeekDrilldown('${jsEscape(m.name)}', '${w.key}')" title="${cellLabel}" class="inline-flex flex-col items-center gap-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200/60 rounded-lg px-2 py-1 cursor-pointer transition hover:bg-emerald-100 hover:border-emerald-300 active:scale-95">
+                <button onclick="${drilldownFn}('${jsEscape(m.name)}', '${b.key}')" title="${cellLabel}" class="inline-flex flex-col items-center gap-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200/60 rounded-lg px-2 py-1 cursor-pointer transition hover:bg-emerald-100 hover:border-emerald-300 active:scale-95">
                   <span class="font-bold text-[11px] leading-none">✓ ${cellData.completed}</span>
                   ${cellData.records ? `<span class="text-[9px] leading-none opacity-70">${cellData.records} rec</span>` : ''}
                 </button>
@@ -2440,11 +2620,15 @@ function openDeferModal(taskId) {
               </tr>`;
           }).join('');
 
+          const totalLabel = selectedCompletionName && selectedCompletionName !== 'all'
+            ? `${useMonthly ? 'Month' : 'Week'} Totals (${selectedCompletionName})`
+            : `${useMonthly ? 'Month' : 'Week'} Totals (all members)`;
+
           const totalRow = `
             <tr class="border-t border-slate-200 bg-slate-50">
-              <td class="py-2.5 font-bold text-slate-700 ${stickyFirstCol} bg-slate-50">${selectedCompletionName && selectedCompletionName !== 'all' ? `Week Totals (${selectedCompletionName})` : 'Week Totals (all members)'}</td>
-              ${weeks.map(w => {
-                const total = weekTotals[w.key] || 0;
+              <td class="py-2.5 font-bold text-slate-700 ${stickyFirstCol} bg-slate-50">${totalLabel}</td>
+              ${buckets.map(b => {
+                const total = bucketTotals[b.key] || 0;
                 return `<td class="py-2.5 text-center font-bold ${total ? 'text-emerald-700' : 'text-slate-300'}">${total || '—'}</td>`;
               }).join('')}
               <td class="py-2.5 text-center font-extrabold text-indigo-700">${grandCompleted}</td>
@@ -2520,8 +2704,8 @@ function openDeferModal(taskId) {
 
       // Default 4-column layout (Task/Type/Status/Dashboard) used by the day-tasks
       // and single-cell completion drilldowns. Other drilldowns (the summary cards,
-      // week-bucket cells) pass their own `columns` array so the same modal can
-      // show whatever shape of data makes sense for that click.
+      // week/month-bucket cells) pass their own `columns` array so the same modal
+      // can show whatever shape of data makes sense for that click.
       const DEFAULT_DRILLDOWN_COLUMNS = [
         {
           label: 'TASK NAME',
@@ -2546,7 +2730,7 @@ function openDeferModal(taskId) {
       // is optional — omit it to get the default Task/Type/Status/Dashboard shape
       // (used by the day-tasks and single-cell drilldowns); pass a custom array
       // (label + render + optional align) for anything else, like the summary
-      // cards or the weekly completion breakdown.
+      // cards or the weekly/monthly completion breakdown.
       function showTaskListModal(title, subtitle, rows, columns) {
         document.getElementById('drilldownModalTitle').innerText = title;
         document.getElementById('drilldownModalSubtitle').innerText = subtitle;
@@ -2718,26 +2902,26 @@ function openDeferModal(taskId) {
             <td class="py-2.5 px-2 text-slate-500">${m.title}</td>
             <td class="py-2.5 px-2 text-slate-500">${m.workingDays.join(', ')}</td>
             <td class="py-2.5 px-2 text-right space-x-2">
-              <button onclick="openUserModal('${m.id}', '${m.name}', '${m.title}')" class="text-indigo-600 hover:text-indigo-800 font-medium text-[11px]">Edit</button>
-              <button onclick="deleteMember('${m.id}')" class="text-rose-500 hover:text-rose-700 font-medium text-[11px]">Deactivate</button>
+              <button onclick="openUserModal('${m.row}', '${m.name.replace(/'/g, "\\'")}', '${m.title}')" class="text-indigo-600 hover:text-indigo-800 font-medium text-[11px]">Edit</button>
+              <button onclick="deleteMember('${m.row}')" class="text-rose-500 hover:text-rose-700 font-medium text-[11px]">Deactivate</button>
             </td>
           </tr>
         `).join('');
       }
 
-          function openUserModal(memberId = '', name = '', title = 'Coordinator') {
-          document.getElementById('userId').value = memberId;
-          document.getElementById('userNameInput').value = name;
-          document.getElementById('userTitleInput').value = title;
+      function openUserModal(memberRow = '', name = '', title = 'Coordinator') {
+        document.getElementById('userRow').value = memberRow;
+        document.getElementById('userNameInput').value = name;
+        document.getElementById('userTitleInput').value = title;
 
-          const member = memberId ? memberList.find(m => m.id === memberId) : null;
+        const member = memberRow ? memberList.find(m => String(m.row) === String(memberRow)) : null;
         const workDays = member ? member.workingDays : ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
         document.querySelectorAll('.work-day').forEach(cb => {
           cb.checked = workDays.includes(cb.value);
         });
 
-        document.getElementById('userModalTitle').innerText = row ? 'Edit Team Member' : 'Add Team Member';
+        document.getElementById('userModalTitle').innerText = memberRow ? 'Edit Team Member' : 'Add Team Member';
         document.getElementById('userModal').classList.remove('hidden');
       }
 
@@ -2765,6 +2949,7 @@ function openDeferModal(taskId) {
               loadTasks();
             });
           })
+          .withFailureHandler(err => alert('Error saving team member: ' + err))
           .saveTeamMember(memberData);
       }
 
@@ -2776,6 +2961,7 @@ function openDeferModal(taskId) {
                 loadTasks();
               });
             })
+            .withFailureHandler(err => alert('Error deactivating member: ' + err))
             .deleteTeamMember(row);
         }
       }

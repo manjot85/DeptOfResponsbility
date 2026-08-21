@@ -214,18 +214,59 @@ function getTaskMasterSheet() {
   return sheet;
 }
 
+// Assigns a permanent Task ID to any row in Task Master whose ID cell (col A)
+// is blank, and writes it straight back to the sheet. This runs as part of
+// every getAllTasksMaster() call, so a blank-ID row gets healed the very first
+// time it's read and is stable forever after.
+//
+// This matters a lot: an ID that only exists in memory for one render (e.g. a
+// naive `"TASK-" + Date.now()` fallback recomputed on every read) changes on
+// every single page load. Any action taken against that task — completing it,
+// editing it, deferring it, merging duplicates — sends an ID the sheet has
+// never seen, so getTaskRowById() can't find the row and the action silently
+// fails or gets lost. The symptom looks exactly like "I marked it done but it
+// didn't stick": the checkbox reverts because the completion was written
+// against an ID that vanished the moment the page re-rendered.
+function healBlankTaskIds_(sheet, data) {
+  const usedIds = new Set(
+    data.map(r => (r[0] ? String(r[0]).trim() : '')).filter(Boolean)
+  );
+  let patched = false;
+
+  data.forEach(row => {
+    const taskName = row[1] ? row[1].toString().trim() : '';
+    if (!taskName) return; // fully-blank row, nothing to heal
+    const existingId = row[0] ? String(row[0]).trim() : '';
+    if (existingId) return;
+
+    let newId;
+    do {
+      newId = 'TASK-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
+    } while (usedIds.has(newId));
+    usedIds.add(newId);
+    row[0] = newId;
+    patched = true;
+  });
+
+  if (patched) {
+    sheet.getRange(2, 1, data.length, data[0].length).setValues(data);
+  }
+  return data;
+}
+
 function getAllTasksMaster() {
   const sheet = getTaskMasterSheet();
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
-  const data = sheet.getRange(2, 1, lastRow - 1, 13).getValues();
+  let data = sheet.getRange(2, 1, lastRow - 1, 13).getValues();
+  data = healBlankTaskIds_(sheet, data);
   const todayDay = getTodayCstDayName_();
 
   return data.map((row, idx) => {
-    // Coerce Col A to String ID or fallback to timestamp-backed unique ID
-    const rawId = row[0] ? String(row[0]).trim() : "";
-    const id = rawId !== "" ? rawId : "TASK-" + (Date.now() + idx);
+    // Col A is now guaranteed non-blank for any real task row (healed above),
+    // so this is just a plain read — no more ephemeral per-render fallback ID.
+    const id = row[0] ? String(row[0]).trim() : "TASK-" + (Date.now() + idx);
 
     const taskName = row[1] ? row[1].toString().trim() : "";
     const assignees = row[2] ? row[2].toString().split(',').map(s => s.trim()).filter(Boolean) : [];
@@ -274,6 +315,9 @@ function getAllTasksMaster() {
   }).filter(t => t.taskName !== "");
 }
 
+// Saves a Task Master row. `taskData.row` (despite the legacy name) is a
+// permanent Task ID string (e.g. "TASK-1700000000123"), NOT a raw sheet row
+// number — it must be resolved via getTaskRowById() before any getRange() call.
 function saveTaskMaster(taskData) {
   const sheet = getTaskMasterSheet();
   const assigneesStr = Array.isArray(taskData.assignedTo) ? taskData.assignedTo.join(',') : (taskData.assignedTo || '');
@@ -286,7 +330,9 @@ function saveTaskMaster(taskData) {
   const dueDateStr = (!isRecurringBool && taskData.dueDate) ? taskData.dueDate : "";
 
   if (taskData.row) {
-    const rowNum = parseInt(taskData.row, 10);
+    const rowNum = getTaskRowById(taskData.row);
+    if (rowNum === -1) throw new Error("Task ID not found: " + taskData.row);
+
     sheet.getRange(rowNum, 2, 1, 5).setValues([[
       taskData.taskName,
       assigneesStr,
@@ -393,7 +439,7 @@ function findDuplicateTaskGroups() {
 
 // Merges one or more groups of duplicate task rows into a single "keep" row per group,
 // combining assignees + recurring days, then removes the duplicate rows entirely.
-// groups: [{ keepRow: <rowNum>, duplicateRows: [<rowNum>, ...] }, ...]
+// groups: [{ keepId: <TaskId>, duplicateIds: [<TaskId>, ...] }, ...]
 function mergeDuplicateTaskGroups(groups) {
   if (!groups || groups.length === 0) return { success: true, merged: 0 };
 
@@ -475,67 +521,34 @@ function mergeDuplicateTaskGroups(groups) {
   return { success: true, merged: uniqueRowsToDelete.length };
 }
 
-function toggleTaskStatus(taskId, status, note) {
+// Marks a task's shared "Completed" status (col 7), stamps Last Updated (col 8)
+// and Updated By (col 9), and — when completed — writes a matching entry to the
+// Log sheet so it's picked up by getDailyCompletionReport(). This is the
+// single-assignee completion path (and the "Mark Complete for All" path for
+// shared tasks); shared per-user completions go through setPersonalTaskStatus
+// instead, which has its own Log-sheet write.
+function toggleTaskStatus(taskId, isCompleted, recordsCount, userName, userTitle) {
   const rowIndex = getTaskRowById(taskId);
   if (rowIndex === -1) throw new Error("Task ID not found: " + taskId);
 
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Task Master");
-  
-  // Example mapping: Adjust column indices below to match your actual "Task Master" sheet structure
-  // Column 7 = Status, Column 8 = Note/Completion Record, Column 9 = Last Updated
-  sheet.getRange(rowIndex, 7).setValue(status);
-  if (note !== undefined && note !== null) {
-    sheet.getRange(rowIndex, 8).setValue(note);
+  const sheet = getTaskMasterSheet();
+  const now = new Date();
+  const count = parseCount_(recordsCount);
+  const actorName = userName || "System";
+
+  // Column 7 = Completed (boolean), Column 8 = Last Updated, Column 9 = Updated By
+  sheet.getRange(rowIndex, 7).setValue(!!isCompleted);
+  sheet.getRange(rowIndex, 8).setValue(now);
+  sheet.getRange(rowIndex, 9).setValue(actorName);
+
+  if (isCompleted) {
+    const taskName = sheet.getRange(rowIndex, 2).getValue();
+    const logSheet = getLogSheet_();
+    const formattedActor = userTitle ? `${actorName} (${userTitle})` : actorName;
+    logSheet.appendRow([now, formattedActor, "Task Master", taskName, "Completed", count]);
   }
-  sheet.getRange(rowIndex, 9).setValue(new Date());
 
   return { success: true, taskId: taskId };
-}
-
-function saveTask(taskData) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Task Master");
-  const userEmail = Session.getActiveUser().getEmail() || "System";
-  const now = new Date();
-
-  // Format array fields into comma-separated strings for Google Sheets
-  const assigneesStr = Array.isArray(taskData.assignedTo) ? taskData.assignedTo.join(", ") : (taskData.assignedTo || "");
-  const recDaysStr = Array.isArray(taskData.recurringDays) ? taskData.recurringDays.join(", ") : (taskData.recurringDays || "");
-
-  if (taskData.id) {
-    // EDIT EXISTING TASK
-    const rowIndex = getTaskRowById(taskData.id);
-    if (rowIndex === -1) throw new Error("Cannot edit. Task ID not found: " + taskData.id);
-
-    // Update individual cells matching your Task Master column mapping
-    sheet.getRange(rowIndex, 2).setValue(taskData.taskName);
-    sheet.getRange(rowIndex, 3).setValue(taskData.taskType || "Report");
-    sheet.getRange(rowIndex, 4).setValue(taskData.dashboardName);
-    sheet.getRange(rowIndex, 5).setValue(taskData.dashboardUrl);
-    sheet.getRange(rowIndex, 6).setValue(assigneesStr);
-    sheet.getRange(rowIndex, 7).setValue(taskData.isRecurring ? "Yes" : "No");
-    sheet.getRange(rowIndex, 8).setValue(recDaysStr);
-    sheet.getRange(rowIndex, 9).setValue(taskData.isActive ? "Active" : "Paused");
-    sheet.getRange(rowIndex, 10).setValue(now);
-    sheet.getRange(rowIndex, 11).setValue(userEmail);
-  } else {
-    // CREATE NEW TASK
-    const newTaskId = "TASK-" + Date.now(); // Generate unique immutable ID
-    sheet.appendRow([
-      newTaskId,                  // Col 1: Task ID
-      taskData.taskName,          // Col 2: Task Name
-      taskData.taskType || "Report", // Col 3: Task Type
-      taskData.dashboardName,     // Col 4: Dashboard Name
-      taskData.dashboardUrl,      // Col 5: Dashboard Link
-      assigneesStr,               // Col 6: Assignees
-      taskData.isRecurring ? "Yes" : "No", // Col 7: Recurring
-      recDaysStr,                 // Col 8: Recurring Days
-      taskData.isActive ? "Active" : "Paused", // Col 9: Status
-      now,                        // Col 10: Last Updated
-      userEmail                   // Col 11: Updated By
-    ]);
-  }
-
-  return { success: true };
 }
 
 /**
@@ -619,23 +632,33 @@ function getPersonalStatusSheet_() {
 }
 
 // Records a personal status for one user on one shared task, for today only.
+// `taskId` is the task's permanent Task ID (e.g. "TASK-...") — it is resolved
+// to a sheet row internally and that row number (not the ID) is what's stored
+// in the "Task Row" column, matching what the frontend keys personalStatusByRow
+// off of (task.id, which IS the Task ID — see buildPersonalStatusMap in the
+// client, which keys by s.taskId as returned here).
 // status: "Completed" (I finished my copy) | "Pending" (undo/revert) | "Deferred" (hand-off for today)
 // note: optional free text (e.g. who is covering it, for "Deferred")
 // recordsCount: required for "Completed" status — number of records processed.
-function setPersonalTaskStatus(row, userName, userTitle, status, note, recordsCount) {
+function setPersonalTaskStatus(taskId, userName, userTitle, status, note, recordsCount) {
   const sheet = getPersonalStatusSheet_();
   const taskSheet = getTaskMasterSheet();
-  const taskName = taskSheet.getRange(row, 2).getValue();
+  const rowIndex = getTaskRowById(taskId);
+  if (rowIndex === -1) throw new Error("Task ID not found: " + taskId);
+
+  const taskName = taskSheet.getRange(rowIndex, 2).getValue();
   const todayStr = getTodayCstDateStr_();
   const timestamp = new Date();
   const count = status === "Completed" ? parseCount_(recordsCount) : '';
 
-  sheet.appendRow([todayStr, row, taskName, userName, status, note || "", timestamp, count]);
+  // Store the permanent Task ID (not the raw row number) so lookups stay valid
+  // even if rows are later reordered/deleted (e.g. by duplicate cleanup).
+  sheet.appendRow([todayStr, taskId, taskName, userName, status, note || "", timestamp, count]);
 
-  // Only "Completed" earns Log-sheet credit (feeds the Progress report's per-user
-  // completed count), matching how individual task completions are credited
-  // elsewhere. "Pending" (undo) and "Deferred" (hand-off) are functional-only and
-  // don't need to show up as report activity.
+  // Only "Completed" earns Log-sheet credit (feeds the Daily Completion report's
+  // per-user completed count), matching how individual task completions are
+  // credited elsewhere. "Pending" (undo) and "Deferred" (hand-off) are
+  // functional-only and don't need to show up as report activity.
   if (status === "Completed") {
     const logSheet = getLogSheet_();
     const formattedActor = userTitle ? `${userName} (${userTitle})` : userName;
@@ -645,8 +668,8 @@ function setPersonalTaskStatus(row, userName, userTitle, status, note, recordsCo
   return { success: true };
 }
 
-// Returns the latest personal status per (task row, user) for a given CST date
-// as a flat array: [{ row, userName, status, note, recordsCount }, ...]
+// Returns the latest personal status per (task id, user) for a given CST date
+// as a flat array: [{ taskId, userName, status, note, recordsCount }, ...]
 function getPersonalStatusesForDate_(dateStr) {
   const sheet = getPersonalStatusSheet_();
   const lastRow = sheet.getLastRow();
@@ -659,9 +682,9 @@ function getPersonalStatusesForDate_(dateStr) {
     const dateValue = normalizeDateCell_(r[0]);
     if (dateValue !== dateStr) return;
 
-    const taskId = r[1];
+    const taskId = r[1] ? String(r[1]).trim() : "";
     const userName = r[3] ? r[3].toString() : "";
-    if (!userName) return;
+    if (!userName || !taskId) return;
     const status = r[4] ? r[4].toString() : "";
     const note = r[5] ? r[5].toString() : "";
     const recordsCount = parseCount_(r[7]);
